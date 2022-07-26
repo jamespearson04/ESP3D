@@ -130,8 +130,6 @@ public:
     void startStream();
     void readNextCommand();
     void endStream();
-    void authorCommand(String commandIn, String param);
-    void authorCommand(String commandIn);
     void processCommand();
     bool isCommand();
     bool isAckNeeded();
@@ -156,7 +154,8 @@ private:
     ESP3DOutput _outputStream;
     level_authenticate_type _auth_type;
     uint64_t _startTimeOut;
-    bool _needRelease ;
+    bool _injectionQueued;
+    bool _needRelease;
 };
 
 extern GcodeHost esp3d_gcode_host;

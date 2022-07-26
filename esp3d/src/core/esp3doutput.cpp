@@ -269,7 +269,7 @@ size_t ESP3DOutput::dispatch (const uint8_t * sbuf, size_t len, uint8_t ignoreCl
             MKSService::sendGcodeFrame((const char *)sbuf);
 #else
             log_esp3d("Dispatch to serial service");
-            serial_service.write(sbuf, len);
+            serial_service.write(sbuf, len); //This should be removed once injection is handled via gcodehost right?
 #endif //COMMUNICATION_PROTOCOL == MKS_SERIAL
         }
     }

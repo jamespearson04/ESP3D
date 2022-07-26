@@ -248,14 +248,20 @@ void GcodeHost::readNextCommand()
             _step = HOST_STOP_STREAM;
         }
     }
-#if defined(FILESYSTEM_FEATURE)
+#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
+    
     if (_fsType ==TYPE_FS_STREAM) {
+        #if defined (SD_DEVICE)
+        ESP_File* fileHandle = &SDfileHandle;
+        #else
+        ESP_File* fileHandle = &FSfileHandle;
+        #endif
         bool processing = true;
-        int c = FSfileHandle.read();
+        int c = fileHandle->read();
         while (((char)c == ' ') || ((char)c =='\n') || ((char)c =='\r')){ //ignore any leading spaces and empty lines (May be unnecessary?: Marlin does strip leading whitespace, but this reduces unnecessary data throughput which is surely a positive)
             _processedSize++;
             _currentPosition++;
-            c = FSfileHandle.read();
+            c = fileHandle->read();
         }
         while(processing){
             if (c == -1) { //do file reads reliably return this at the end of files? it appears to...
@@ -265,12 +271,12 @@ void GcodeHost::readNextCommand()
                 _currentCommand+=(char)c;
                 _processedSize++;
                 _currentPosition++;
-                c = FSfileHandle.read();
+                c = fileHandle->read();
             } else if ((char)c == ';'){
                 while(!(((char)c == '\n') || ((char)c =='\r'))){ //Skip past any comments to the end of the line
                     _processedSize++;
                     _currentPosition++;
-                    c = FSfileHandle.read();
+                    c = fileHandle->read();
                 }
                 //in the case of full line comments, continue on to the next line
                 if (_currentCommand.length() != 0){
@@ -278,7 +284,7 @@ void GcodeHost::readNextCommand()
                 } else {
                     _processedSize++;
                     _currentPosition++;
-                    c = FSfileHandle.read();
+                    c = fileHandle->read();
                 }
             } else if (((char)c == '\n') || ((char)c =='\r')){
                 if (_currentCommand.length() != 0){
@@ -286,7 +292,7 @@ void GcodeHost::readNextCommand()
                     } else {
                         _processedSize++;
                         _currentPosition++;
-                        c = FSfileHandle.read();
+                        c = fileHandle->read();
                     }
             }
         
@@ -304,60 +310,8 @@ void GcodeHost::readNextCommand()
         }
     }
 #endif //FILESYSTEM_FEATURE
-#if defined(SD_DEVICE)
-    if (_fsType ==TYPE_FS_STREAM) {
-        bool processing = true;
-        int c = SDfileHandle.read();
-        while (((char)c == ' ') || ((char)c =='\n') || ((char)c =='\r')){ //ignore any leading spaces and empty lines (May be unnecessary?: Marlin does strip leading whitespace, but this reduces unnecessary data throughput which is surely a positive)
-            _processedSize++;
-            _currentPosition++;
-            c = SDfileHandle.read();
-        }
-        while(processing){
-            if (c == -1) { //do file reads reliably return this at the end of files? it appears to...
-                processing = false;
-            }
-            else if (!(((char)c =='\n') || ((char)c =='\r') || ((char)c == ';'))) { //Added ';' as endline/end of command/comment character
-                _currentCommand+=(char)c;
-                _processedSize++;
-                _currentPosition++;
-                c = SDfileHandle.read();
-            } else if ((char)c == ';'){
-                while(!(((char)c == '\n') || ((char)c =='\r'))){ //Skip past any comments to the end of the line
-                    _processedSize++;
-                    _currentPosition++;
-                    c = SDfileHandle.read();
-                }
-                //in the case of full line comments, continue on to the next line
-                if (_currentCommand.length() != 0){
-                    processing = false;
-                } else {
-                    _processedSize++;
-                    _currentPosition++;
-                    c = SDfileHandle.read();
-                }
-            } else if (((char)c == '\n') || ((char)c =='\r')){
-                if (_currentCommand.length() != 0){
-                        processing = false;
-                    } else {
-                        _processedSize++;
-                        _currentPosition++;
-                        c = SDfileHandle.read();
-                    }
-            }
-        
-            if (_processedSize >= _totalSize){ //in the case of a missing last line ending, this should end the final line
-                processing = false;
-            }
-        }
-        
-
-        if (_currentCommand.length() == 0) {
-            _step = HOST_STOP_STREAM;
-        }
-    }
-#endif //SD_DEVICE
 }
+
 
 bool GcodeHost::isCommand()
 {
@@ -376,75 +330,6 @@ bool GcodeHost::isAckNeeded()
 {
     //TODO: what command do not need for ack ?
     return true;
-}
-void GcodeHost::authorCommand(String commandIn, String param)
-{
-    //TODO write function to send ESP authored commands to printer.
-    String cmd = commandIn + " " + param + '\n';
-
-#if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-    ESP3DOutput output(ESP_SOCKET_SERIAL_CLIENT);
-#endif//COMMUNICATION_PROTOCOL
-#if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
-    ESP3DOutput output(ESP_SERIAL_CLIENT);
-#endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-    ESP3DOutput outputhost(ESP_STREAM_HOST_CLIENT);
-
-#if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-        esp3d_commands.process((uint8_t *)cmd.c_str(), cmd.length(),&_outputStream, _auth_type,&output,_outputStream.client()==ESP_ECHO_SERIAL_CLIENT?ESP_SOCKET_SERIAL_CLIENT:0 ) ;
-#endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL            
-#if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
-        log_esp3d("Command is not ESP command:%s, client is %d and only is %d",cmd.c_str(), (&_outputStream?_outputStream.client():0),(&output?output.client():0));
-        esp3d_commands.process((uint8_t *)cmd.c_str(), cmd.length(),&_outputStream, _auth_type,&output) ;
-#endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-    _startTimeOut =millis();
-    log_esp3d("Command is GCODE command");
-    if (isAckNeeded()) {
-        if ((cmd.indexOf("M190") == -1) && (cmd.indexOf("M109") == -1)){
-            _step = HOST_WAIT4_ACK;
-            log_esp3d("Command wait for ack");
-        } else {
-            _step = HOST_WAIT4_HEATING;
-            log_esp3d("Command wait for post heating ack");
-        }
-    } else {
-        _step = HOST_READ_LINE;
-    }
-}
-
-void GcodeHost::authorCommand(String commandIn)
-{
-    //TODO write function to send ESP authored commands to printer.
-    String cmd = commandIn + '\n';
-
-#if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-    ESP3DOutput output(ESP_SOCKET_SERIAL_CLIENT);
-#endif//COMMUNICATION_PROTOCOL
-#if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
-    ESP3DOutput output(ESP_SERIAL_CLIENT);
-#endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-    ESP3DOutput outputhost(ESP_STREAM_HOST_CLIENT);
-
-#if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-        esp3d_commands.process((uint8_t *)cmd.c_str(), cmd.length(),&_outputStream, _auth_type,&output,_outputStream.client()==ESP_ECHO_SERIAL_CLIENT?ESP_SOCKET_SERIAL_CLIENT:0 ) ;
-#endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL            
-#if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
-        log_esp3d("Command is not ESP command:%s, client is %d and only is %d",cmd.c_str(), (&_outputStream?_outputStream.client():0),(&output?output.client():0));
-        esp3d_commands.process((uint8_t *)cmd.c_str(), cmd.length(),&_outputStream, _auth_type,&output) ;
-#endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL
-    _startTimeOut =millis();
-    log_esp3d("Command is GCODE command");
-    if (isAckNeeded()) {
-        if ((cmd.indexOf("M190") == -1) && (cmd.indexOf("M109") == -1)){
-            _step = HOST_WAIT4_ACK;
-            log_esp3d("Command wait for ack");
-        } else {
-            _step = HOST_WAIT4_HEATING;
-            log_esp3d("Command wait for post heating ack");
-        }
-    } else {
-        _step = HOST_READ_LINE;
-    }
 }
 
 void GcodeHost::processCommand()
@@ -501,6 +386,7 @@ void GcodeHost::processCommand()
 void GcodeHost::handle()
 {
     if ((_step == HOST_NO_STREAM) || (_step == HOST_STREAM_PAUSED)) {
+        //if terminal and ui commands are being handled here, they need to be handled even if no stream is ongoing
         return;
     }
     switch(_step) {
@@ -511,6 +397,8 @@ void GcodeHost::handle()
         if (_nextStep==HOST_PAUSE_STREAM) {
             _step = HOST_PAUSE_STREAM;
             _nextStep = HOST_READ_LINE;
+        } else if (_injectionQueued) {
+            //if we have commands queued for injection, read them before continuing from file
         } else {
             readNextCommand();
         }
@@ -535,7 +423,7 @@ void GcodeHost::handle()
         break;
     case HOST_PAUSE_STREAM:
         //TODO pause stream
-        authorCommand("M0"); //M0 is unconditional stop in marlin
+        //authorCommand("M0"); //if resume gcode exists, queue it in the stream
         _nextStep = HOST_STREAM_PAUSED;
         //_step = HOST_WAIT4_ACK;
         break;
@@ -544,7 +432,7 @@ void GcodeHost::handle()
     //    break;
     case HOST_RESUME_STREAM:
         //Any extra action to resume stream?
-        authorCommand("M108"); //break and continue in marlin
+        //authorCommand("M108"); //if resume gcode exists, queue it in the stream
         //_nextStep = HOST_READ_LINE;
         break;
     case HOST_STOP_STREAM:
@@ -564,7 +452,7 @@ void GcodeHost::handle()
 #if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
         ESP3DOutput output(ESP_SERIAL_CLIENT);
 #endif//COMMUNICATION_PROTOCOL
-        output.dispatch((const uint8_t *)Error.c_str(), Error.length());
+        output.dispatch((const uint8_t *)Error.c_str(), Error.length()); //Does this need M114 adding? Not sure what good sending an error string to the printer would do
         _step = HOST_STOP_STREAM;
     }
     break;
@@ -582,7 +470,7 @@ bool  GcodeHost::abort()
     log_esp3d("Aborting script");
     //TODO: what to do in addition ?
     //Emergency stop for Marlin added (Maybe need a switch for other firmwares? -> should be mostly universal)
-    authorCommand("M112");
+    //authorCommand("M112");//if end gcode exists, queue it in the stream
     _error=ERROR_STREAM_ABORTED;
     //we do not use step to do faster abort
     endStream();
@@ -640,7 +528,7 @@ void GcodeHost::resetCommandNumbering()
     _commandNumber = 1;
     //need to use process to send command
     //return _outputStream.printLN(resetcmd.c_str());
-    authorCommand("M110", "N0");
+    //authorCommand("M110", "N0");//Need to inject this command into stream here
 }
 
 uint32_t GcodeHost::getCommandNumber(String & response)
