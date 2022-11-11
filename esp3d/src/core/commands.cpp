@@ -26,6 +26,9 @@
 #if COMMUNICATION_PROTOCOL == MKS_SERIAL
 #include "../modules/mks/mks_service.h"
 #endif //COMMUNICATION_PROTOCOL == MKS_SERIAL
+#if defined(GCODE_HOST_FEATURE)
+#include "../modules/gcode_host/gcode_host.h"
+#endif //GCODE_HOST_FEATURE
 
 Commands esp3d_commands;
 
@@ -91,6 +94,17 @@ void Commands::process(uint8_t * sbuf, size_t len, ESP3DOutput * output, level_a
             } else {
                 outputonly->write(sbuf, len);
             }
+            
+#elif defined(GCODE_HOST_FEATURE)
+            if (((outputonly->client() == ESP_SERIAL_CLIENT)) && (output->client() != ESP_STREAM_HOST_CLIENT)) {
+                esp3d_gcode_host.injectCommand(sbuf, len);
+            } else if (((outputonly->client() == ESP_SERIAL_CLIENT)) && (output->client() == ESP_STREAM_HOST_CLIENT)) { //(output->client() == ESP_STREAM_HOST_CLIENT) {
+                outputonly->write(sbuf, len);
+            } else {
+                outputonly->write(sbuf, len);
+            }
+
+            
 #else
             outputonly->write(sbuf, len);
 #endif //COMMUNICATION_PROTOCOL == MKS_SERIAL
