@@ -200,6 +200,7 @@ void GcodeHost::startStream()
     _response = "";
     _currentPosition = 0; //Duplicate?
     _error = ERROR_NO_ERROR;
+    _startTimeOut =millis();
     _step = HOST_WAIT4_ACK;
     _nextStep = HOST_READ_LINE;
     _processedSize = 0;
@@ -228,11 +229,122 @@ void GcodeHost::endStream()
     _step = HOST_NO_STREAM;
 }
 
+void GcodeHost::injectCommand(const uint8_t* injection, size_t len) //might need to return size_t
+{   
+    String inject = "";
+    const uint8_t* injectAddr = injection;
+    for (size_t i = 0; i < len;  i++){
+        inject = inject + (char)*injectAddr;
+        injectAddr++;
+    }
+    _injectionQueued = true;
+    if (_injectedCommand != "") { //if command isn't empty, append injection with a new line
+        _injectedCommand = _injectedCommand + '\n' + inject;
+    } else { //If there's no command, reset
+        _injectedCommand = inject;
+        _injectedPosition = 0;
+        _saveStep = -1;
+    }
+    if ((_step == HOST_NO_STREAM) || (_step == HOST_STREAM_PAUSED)) {
+        _saveStep = _step;
+        _step = HOST_READ_LINE;
+    }
+}
+
+/*
+void GcodeHost::readInjectedCommand() //comment me out
+{
+    _step = HOST_PROCESS_LINE;
+
+    _currentCommand = "";
+    _currentCommand = _injectedCommand + '\n'; //placeholder to make it work with a single clean command
+
+    if (_injectedPosition == _injectedCommand.length()) {
+        _injectionQueued = false;
+        _injectedCommand = "";
+        _injectedPosition = 0;
+        _step = _saveStep;
+    }
+
+}
+*/
+
 void GcodeHost::readNextCommand()
 {
     _currentCommand = "";
     _step = HOST_PROCESS_LINE;
-    if (_fsType ==TYPE_SCRIPT_STREAM) {
+
+    if (_injectionQueued == true) {
+    //if (false) {
+        //Injection parsing here -> use FS stream as template or script stream? Need to add \n support
+        char c = _injectedCommand[_injectedPosition];
+        while (((char)c == ' ') || ((char)c =='\n') || ((char)c =='\r')){ //ignore any leading spaces and empty lines (May be unnecessary?: Marlin does strip leading whitespace, but this reduces unnecessary data throughput which is surely a positive)
+            //_processedSize++; //Don't want to increment this, as isn't part of streaming file
+            _injectedPosition++;
+            c = _injectedCommand[_injectedPosition];
+        }
+        _injectedCommand = _injectedCommand.substring(_injectedPosition);
+        _injectedPosition = 0;
+        uint32_t newlineIndex = _injectedCommand.indexOf('\n');
+        uint32_t commentIndex = _injectedCommand.indexOf(';');
+        //uint32_t newlineIndex = _injectedCommand.indexOf('\n', _injectedPosition);
+        //uint32_t commentIndex = _injectedCommand.indexOf(';', _injectedPosition);
+
+        if ((newlineIndex != -1) && (newlineIndex < (_injectedCommand.length() - 1))) { //has newline that isn't last char, handle as such
+            if ((commentIndex != -1)&&(commentIndex < newlineIndex)) { //Has comment on this line, remove and skip to endline
+                _currentCommand = _injectedCommand.substring(_injectedPosition, commentIndex);
+                _injectedPosition = newlineIndex + 1;
+                _injectedCommand = _injectedCommand.substring(_injectedPosition);
+                _injectedPosition = 0;
+            } else { //no comment, remove and go to new line
+                _currentCommand = _injectedCommand.substring(_injectedPosition, newlineIndex);
+                _injectedPosition = newlineIndex + 1;
+                _injectedCommand = _injectedCommand.substring(_injectedPosition);
+                _injectedPosition = 0;
+            }
+        } else { //no newline character, must be a single line
+            if (commentIndex != -1){
+                if (commentIndex != _injectedPosition) { //if it's not entirely comment, set cmd
+                    _currentCommand = _injectedCommand.substring(_injectedPosition, (commentIndex-1)); //_injectedCommand.indexOf(';', _injectedPosition)); //can remove fromindex here
+                    _injectedPosition = _injectedCommand.length(); //rest of injection is comment as there is no newline
+                } //if it is all comment, do nothing
+                _injectedCommand = ""; //whole command read, clear
+                _injectedPosition = 0;
+            } else {
+                _currentCommand = _injectedCommand; // No comment, set as command
+                _injectedCommand = ""; //whole command read, clear
+                _injectedPosition = 0;
+                
+            }
+            //injection completed, end injection process and revert to prior state
+            _injectionQueued = false;
+             // states have to be reset after processing
+            if (_saveStep != -1) { //If stream was stopped/paused, return to this state
+                _nextStep = _saveStep;
+                _saveStep = -1;
+            }
+            /*} else { //if the stream was in progress, resume streaming
+                _step = HOST_READ_LINE; //no, needs to process next
+            }*/
+            
+        } //xxxxxxxxxxxxxxx checked to here
+
+        /* //this won't work since position is reset before this
+        if ((_injectedPosition >= (_injectedCommand.length())) && (_currentCommand == "")) { //Does this need -1? Nah, that would be last char
+            _injectionQueued = false;
+            _injectedCommand = "";
+            _injectedPosition = 0;
+            if (_saveStep != -1) { //If stream was stopped/paused, return to this state
+                _step = _saveStep;
+                _saveStep = -1;
+            } else { //if the stream was in progress, resume streaming
+                _step = HOST_READ_LINE;
+            }
+        }
+        */
+
+
+    } else if (_fsType ==TYPE_SCRIPT_STREAM) {
         log_esp3d("Reading next command from script");
         if (_currentPosition < _script.length()) {
             if (_script.indexOf(';', _currentPosition) != -1) {
@@ -248,20 +360,24 @@ void GcodeHost::readNextCommand()
             _step = HOST_STOP_STREAM;
         }
     }
-#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
+#if defined(FILESYSTEM_FEATURE) //|| defined(SD_DEVICE)
     
-    if (_fsType ==TYPE_FS_STREAM) {
+    else if (_fsType ==TYPE_FS_STREAM) {
+        /*
         #if defined (SD_DEVICE)
         ESP_File* fileHandle = &SDfileHandle;
         #else
         ESP_File* fileHandle = &FSfileHandle;
         #endif
+        */
+        
         bool processing = true;
-        int c = fileHandle->read();
+        //int c = fileHandle->read();
+        int c = FSfileHandle.read();
         while (((char)c == ' ') || ((char)c =='\n') || ((char)c =='\r')){ //ignore any leading spaces and empty lines (May be unnecessary?: Marlin does strip leading whitespace, but this reduces unnecessary data throughput which is surely a positive)
             _processedSize++;
             _currentPosition++;
-            c = fileHandle->read();
+            c = FSfileHandle.read();
         }
         while(processing){
             if (c == -1) { //do file reads reliably return this at the end of files? it appears to...
@@ -271,12 +387,12 @@ void GcodeHost::readNextCommand()
                 _currentCommand+=(char)c;
                 _processedSize++;
                 _currentPosition++;
-                c = fileHandle->read();
+                c = FSfileHandle.read();
             } else if ((char)c == ';'){
                 while(!(((char)c == '\n') || ((char)c =='\r'))){ //Skip past any comments to the end of the line
                     _processedSize++;
                     _currentPosition++;
-                    c = fileHandle->read();
+                    c = FSfileHandle.read();
                 }
                 //in the case of full line comments, continue on to the next line
                 if (_currentCommand.length() != 0){
@@ -284,7 +400,7 @@ void GcodeHost::readNextCommand()
                 } else {
                     _processedSize++;
                     _currentPosition++;
-                    c = fileHandle->read();
+                    c = FSfileHandle.read();
                 }
             } else if (((char)c == '\n') || ((char)c =='\r')){
                 if (_currentCommand.length() != 0){
@@ -292,7 +408,7 @@ void GcodeHost::readNextCommand()
                     } else {
                         _processedSize++;
                         _currentPosition++;
-                        c = fileHandle->read();
+                        c = FSfileHandle.read();
                     }
             }
         
@@ -311,7 +427,6 @@ void GcodeHost::readNextCommand()
     }
 #endif //FILESYSTEM_FEATURE
 }
-
 
 bool GcodeHost::isCommand()
 {
@@ -361,10 +476,19 @@ void GcodeHost::processCommand()
 #endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL            
 #if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
             log_esp3d("Command is not ESP command:%s, client is %d and only is %d",cmd.c_str(), (&_outputStream?_outputStream.client():0),(&output?output.client():0));
+            /*
+            if (_injectionQueued == false){
+                cmd = CheckSumCommand(cmd.c_str(), _commandNumber);
+                cmd = cmd + "\n";
+                _commandNumber++;
+            } else {
+                cmd = cmd + "\n";
+            }
+            */
             cmd = CheckSumCommand(cmd.c_str(), _commandNumber);
             cmd = cmd + "\n";
-            esp3d_commands.process((uint8_t *)cmd.c_str(), cmd.length(),&_outputStream, _auth_type,&output);
             _commandNumber++;
+            esp3d_commands.process((uint8_t *)cmd.c_str(), cmd.length(),&outputhost, _auth_type,&output);
 #endif //COMMUNICATION_PROTOCOL == SOCKET_SERIAL           
             _startTimeOut =millis();
             log_esp3d("Command is GCODE command");
@@ -377,7 +501,7 @@ void GcodeHost::processCommand()
                     log_esp3d("Command wait for post heating ack");
                 }
             } else {
-                _step = HOST_READ_LINE;
+                _step = HOST_READ_LINE; //will need updating for injection handling if isackneeded ever returns false
             }
         }
     }
@@ -385,7 +509,7 @@ void GcodeHost::processCommand()
 
 void GcodeHost::handle()
 {
-    if ((_step == HOST_NO_STREAM) || (_step == HOST_STREAM_PAUSED)) {
+    if (((_step == HOST_NO_STREAM) || (_step == HOST_STREAM_PAUSED)) && (!_injectionQueued)) {
         //if terminal and ui commands are being handled here, they need to be handled even if no stream is ongoing
         return;
     }
@@ -397,8 +521,12 @@ void GcodeHost::handle()
         if (_nextStep==HOST_PAUSE_STREAM) {
             _step = HOST_PAUSE_STREAM;
             _nextStep = HOST_READ_LINE;
-        } else if (_injectionQueued) {
-            //if we have commands queued for injection, read them before continuing from file
+        } else if (_nextStep==HOST_STREAM_PAUSED) {
+            _step = HOST_STREAM_PAUSED;
+            _nextStep = HOST_READ_LINE;
+        } else if (_nextStep==HOST_NO_STREAM) {
+            _step = HOST_NO_STREAM;
+            _nextStep = HOST_READ_LINE;
         } else {
             readNextCommand();
         }
@@ -413,7 +541,6 @@ void GcodeHost::handle()
             _step = HOST_ERROR_STREAM;
         }
         break;
-        //NOT YET IMPLEMENTED TODO
     case HOST_WAIT4_HEATING:
         if (millis() - _startTimeOut > ESP_HOST_HEATING_TIMEOUT) {
             log_esp3d("Timeout waiting for heatup ack");
@@ -421,15 +548,27 @@ void GcodeHost::handle()
             _step = HOST_ERROR_STREAM;
         }
         break;
+    /*case HOST_INJECTING_COMMAND://Should be unneccessary as is handled in HOST_READ_LINE
+        readInjectedCommand();
+        break;*/
     case HOST_PAUSE_STREAM:
         //TODO pause stream
         //authorCommand("M0"); //if resume gcode exists, queue it in the stream
-        _nextStep = HOST_STREAM_PAUSED;
-        //_step = HOST_WAIT4_ACK;
+        _step = HOST_STREAM_PAUSED;
         break;
-    //case HOST_STREAM_PAUSED: //rejected at first if statement
-        //TODO Anything to do on pause?
-    //    break;
+    case HOST_STREAM_PAUSED: //rejected at first if statement
+        //TODO Anything to do on pause? Handle injected gcode?
+        /*if (_injectionQueued){
+            //handle injection
+            //readInjectedCommand();
+        }*/
+        break;
+    case HOST_NO_STREAM:
+        /*if (_injectionQueued){
+            //handle injection
+            //readInjectedCommand();
+        }*/
+        break;
     case HOST_RESUME_STREAM:
         //Any extra action to resume stream?
         //authorCommand("M108"); //if resume gcode exists, queue it in the stream
@@ -452,7 +591,7 @@ void GcodeHost::handle()
 #if COMMUNICATION_PROTOCOL == RAW_SERIAL || COMMUNICATION_PROTOCOL == MKS_SERIAL
         ESP3DOutput output(ESP_SERIAL_CLIENT);
 #endif//COMMUNICATION_PROTOCOL
-        output.dispatch((const uint8_t *)Error.c_str(), Error.length()); //Does this need M114 adding? Not sure what good sending an error string to the printer would do
+        output.dispatch((const uint8_t *)Error.c_str(), Error.length());
         _step = HOST_STOP_STREAM;
     }
     break;
@@ -469,7 +608,7 @@ bool  GcodeHost::abort()
     }
     log_esp3d("Aborting script");
     //TODO: what to do in addition ?
-    //Emergency stop for Marlin added (Maybe need a switch for other firmwares? -> should be mostly universal)
+    //Emergency stop for Marlin added (Maybe need a switch for other firmwares? -> should be mostly universal -> Not GRBL)
     //authorCommand("M112");//if end gcode exists, queue it in the stream
     _error=ERROR_STREAM_ABORTED;
     //we do not use step to do faster abort

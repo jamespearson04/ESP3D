@@ -136,6 +136,7 @@ bool Esp3D::begin()
 
 #endif //WIFI_FEATURE
 #if defined(GCODE_HOST_FEATURE)
+    esp3d_gcode_host.begin();
 #if defined(ESP_AUTOSTART_SCRIPT)
     esp3d_gcode_host.processScript(ESP_AUTOSTART_SCRIPT);
 #endif //ESP_AUTOSTART_FEATURE

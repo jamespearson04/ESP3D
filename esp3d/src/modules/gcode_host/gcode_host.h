@@ -54,6 +54,7 @@ class ESP3DOutput;
 #define HOST_ABORT_STREAM  9
 #define HOST_WAIT4_HEATING 10
 #define HOST_STREAM_PAUSED 11
+#define HOST_INJECTING_COMMAND 12
 
 #define TYPE_SCRIPT_STREAM 0
 #define TYPE_FS_STREAM     1
@@ -128,6 +129,7 @@ public:
     bool pause();
     bool resume();
     void startStream();
+    void injectCommand(const uint8_t* injection, size_t len);
     void readNextCommand();
     void endStream();
     void processCommand();
@@ -145,16 +147,19 @@ private:
     uint8_t _error;
     uint8_t _step;
     uint8_t _nextStep;
+    uint8_t _saveStep;
     uint32_t _currentPosition;
     String _fileName;
     String _script;
     uint8_t _fsType;
     String _currentCommand;
+    String _injectedCommand;
+    uint32_t _injectedPosition;
     String _response;
     ESP3DOutput _outputStream;
     level_authenticate_type _auth_type;
     uint64_t _startTimeOut;
-    bool _injectionQueued;
+    bool _injectionQueued = false;
     bool _needRelease;
 };
 
