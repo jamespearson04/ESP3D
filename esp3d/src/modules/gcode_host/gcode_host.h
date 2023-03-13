@@ -1,7 +1,7 @@
 /*
-  gcode_host.h -  gcode host functions class
+gcode_host.h - gcode host functions class
 
-  Copyright (c) 2014 Luc Lebosse. All rights reserved.
+  Copyright (c) 2014 Luc Lebosse & 2022 James Pearson. All rights reserved.
 
   This code is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -19,14 +19,20 @@
 */
 
 
-
 #ifndef _GCODE_HOST_H
 #define _GCODE_HOST_H
 
 #include <Arduino.h>
-#include "../authentication/authentication_service.h"
+#include "../authentication/authentication_service.h" 
+
+
+#if defined(FILESYSTEM_FEATURE) //probably need sd too
+#include "../filesystem/esp_filesystem.h"
+#endif //FILESYSTEM_FEATURE
+
 class ESP3DOutput;
 
+//Error states
 #define ERROR_NO_ERROR          0
 #define ERROR_TIME_OUT          1
 #define ERROR_CANNOT_SEND_DATA  2
@@ -42,19 +48,22 @@ class ESP3DOutput;
 #define ERROR_FILE_NOT_FOUND    12
 #define ERROR_STREAM_ABORTED    13
 
-#define HOST_NO_STREAM     0
-#define HOST_START_STREAM  1
-#define HOST_READ_LINE     2
-#define HOST_PROCESS_LINE  3
-#define HOST_WAIT4_ACK     4
-#define HOST_PAUSE_STREAM  5
-#define HOST_RESUME_STREAM 6
-#define HOST_STOP_STREAM   7
-#define HOST_ERROR_STREAM  8
-#define HOST_ABORT_STREAM  9
-#define HOST_WAIT4_HEATING 10
+//Host streaming steps
+#define HOST_READ_LINE     0
+#define HOST_PROCESS_LINE  1
+#define HOST_WAIT4_ACK     2
+#define HOST_WAIT4_ACK_NT  3
+
+#define HOST_NO_STREAM     4
+#define HOST_START_STREAM  5
+#define HOST_PAUSE_STREAM  6
+#define HOST_RESUME_STREAM 7
+#define HOST_STOP_STREAM   8
+#define HOST_ERROR_STREAM  9
+#define HOST_ABORT_STREAM  10
 #define HOST_STREAM_PAUSED 11
-#define HOST_INJECTING_COMMAND 12
+#define HOST_STREAM_COMMAND 12
+#define HOST_GOTO_LINE     13
 
 #define TYPE_SCRIPT_STREAM 0
 #define TYPE_FS_STREAM     1
@@ -62,110 +71,116 @@ class ESP3DOutput;
 
 #define  ESP_HOST_BUFFER_SIZE 255
 
+#define MUTEX_TIMEOUT 10000 //portMAX_DELAY
+
 class GcodeHost
 {
 public:
+
+    SemaphoreHandle_t _injectionMutex;
+
     GcodeHost();
     ~GcodeHost();
+
     bool begin();
+    void reset();
     void end();
+
     void handle();
+
+    //bool processScript(const char * line, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
+    bool processFile(const char * filename, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
+    bool sendScript(const char * line, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
+    bool sendCommand(const uint8_t* injection, size_t len);
+    
+    void readNextCommand();
+    void readInjectedCommand();
+    bool gotoLine(uint32_t line);
+    void awaitAck();
+    void processCommand();
+    
+
+    bool startStream();
+    void endStream();
+    bool pause();
+    bool resume();
+    bool abort();
+
     bool push(const uint8_t * sbuf, size_t len);
     void flush();
-    /*bool sendCommand(const char* command, bool checksum = false, bool wait4ack = true, const char * ack=nullptr);*/
-    uint32_t currentCommandNumber()
-    {
-        return _commandNumber;
-    }
-    void setCommandNumber(uint32_t n)
-    {
-        _commandNumber = n;
-    }
-    void resetCommandNumbering();
+    bool isAck(String & line);
+
+    void resetCommandNumber();
+    uint32_t resendCommandNumber(String & response);
+    uint32_t getCommandNumber(){ return _commandNumber;}
+    void setCommandNumber(uint32_t n){ _commandNumber = n;}
+
     uint8_t Checksum(const char * command, uint32_t commandSize);
     String CheckSumCommand(const char* command, uint32_t commandnb);
 
-    /*bool wait_for_ack(uint32_t timeout = DEFAULT_TIMOUT, bool checksum=false, const char * ack=nullptr);*/
+    void  setErrorNum(uint8_t error){ _error = error;}
+    uint8_t getErrorNum(){ return _error;}
+    uint8_t getStatus(){ return _step;}
 
-    uint32_t getCommandNumber(String & response);
+    size_t totalSize(){ return _totalSize;}
+    size_t processedSize(){ return _processedSize;}
 
-    uint8_t getErrorNum()
-    {
-        return _error;
-    }
-
-    void  setErrorNum(uint8_t error)
-    {
-        _error = error;
-    }
-
-    uint8_t getStatus()
-    {
-        return _step;
-    }
-
-    size_t totalSize()
-    {
-        return _totalSize;
-    }
-    size_t processedSize()
-    {
-        return _processedSize;
-    }
-    uint8_t getFSType()
-    {
-        return _fsType;
-    }
+    uint8_t getFSType(){ return _fsType;}
     const char * fileName()
     {
-        if (_fileName.length() == 0) {
-            return nullptr;
-        }
+        if (_fileName.length() == 0) { return nullptr;}
         return _fileName.c_str();
     }
-    bool processScript(const char * line, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
-    bool processFile(const char * filename, level_authenticate_type auth_type= LEVEL_ADMIN, ESP3DOutput * output=nullptr);
-    bool abort();
-    bool pause();
-    bool resume();
-    void startStream();
-    void injectCommand(const uint8_t* injection, size_t len);
-    void readNextCommand();
-    void endStream();
-    void authorCommand(String commandIn, String param);
-    void authorCommand(String commandIn);
-    void processCommand();
-    bool isCommand();
-    bool isAckNeeded();
-    bool isAck(String & line);
 
 private:
     uint8_t _buffer [ESP_HOST_BUFFER_SIZE+1];
     size_t _bufferSize;
+
+    
+#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
+    ESP_File fileHandle;
+#endif //FILESYSTEM_FEATURE
+
+#if defined(SD_DEVICE)
+    bool _needRelease;
+#endif //SD_DEVICE
+
     size_t _totalSize;
     size_t _processedSize;
+
+    uint32_t _currentPosition;
+
+    
+    String _currentCommand;
+    String _injectedCommand;
+
     uint32_t _commandNumber;
     uint32_t _needCommandNumber;
-    uint8_t _error;
-    uint8_t _step;
-    uint8_t _nextStep;
-    uint8_t _saveStep;
-    uint32_t _currentPosition;
+
     String _fileName;
     String _script;
     uint8_t _fsType;
-    String _currentCommand;
-    String _injectedCommand;
-    uint32_t _injectedPosition;
+
+
+    uint8_t _step;
+    uint8_t _nextStep;
+    uint8_t _state;
+    uint8_t _error;
+    bool _injectionQueued;
+    bool _skipChecksum;
+    bool _needAck;
+    bool _noTimeout;
+
     String _response;
+
+    uint64_t _startTimeOut;
+
     ESP3DOutput _outputStream;
     level_authenticate_type _auth_type;
-    uint64_t _startTimeOut;
-    bool _injectionQueued = false;
-    bool _needRelease;
+    
+    
 };
 
 extern GcodeHost esp3d_gcode_host;
 
-#endif //_GCODE_HOST_H
-
+#endif

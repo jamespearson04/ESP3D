@@ -97,11 +97,11 @@ void Commands::process(uint8_t * sbuf, size_t len, ESP3DOutput * output, level_a
             
 #elif defined(GCODE_HOST_FEATURE)
             if (((outputonly->client() == ESP_SERIAL_CLIENT)) && (output->client() != ESP_STREAM_HOST_CLIENT)) {
-                esp3d_gcode_host.injectCommand(sbuf, len);
-            } else if (((outputonly->client() == ESP_SERIAL_CLIENT)) && (output->client() == ESP_STREAM_HOST_CLIENT)) { //(output->client() == ESP_STREAM_HOST_CLIENT) {
-                outputonly->write(sbuf, len);
-            } else {
-                outputonly->write(sbuf, len);
+                esp3d_gcode_host.sendCommand(sbuf, len); //if it doesn't come from gcodehost, pass it to it
+            } else if (((outputonly->client() == ESP_SERIAL_CLIENT)) && (output->client() == ESP_STREAM_HOST_CLIENT)) {
+                outputonly->write(sbuf, len); //if it comes from gcodehost, write it to serial
+            } else { 
+                outputonly->write(sbuf, len); // shouldn't ever reach here, check and remove later
             }
 
             
