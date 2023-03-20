@@ -52,7 +52,7 @@ GcodeHost::~GcodeHost()
 bool GcodeHost::begin()
 {
     reset();
-    _injectionMutex = xSemaphoreCreateMutex();
+    //_injectionMutex = xSemaphoreCreateMutex();
     assert(_injectionMutex);
     return true;
 }
@@ -60,7 +60,7 @@ bool GcodeHost::begin()
 void GcodeHost::end()
 {
     reset();
-    vSemaphoreDelete(_injectionMutex);
+    //vSemaphoreDelete(_injectionMutex);
 }
 
 void GcodeHost::reset()
@@ -345,7 +345,7 @@ bool GcodeHost::sendCommand(const uint8_t* injection, size_t len)
     _injectionQueued = true;
     inject.trim();
     
-    if(xSemaphoreTake(_injectionMutex, MUTEX_TIMEOUT)) {
+    //if(xSemaphoreTake(_injectionMutex, MUTEX_TIMEOUT)) {
         int m112 = inject.indexOf("M112");
         int m108 = inject.indexOf("M108");
         //function that checks for all of these would be handy, could just return the smallest num above -1 if any
@@ -396,10 +396,10 @@ bool GcodeHost::sendCommand(const uint8_t* injection, size_t len)
                 inject = "";
             }
         }
-        xSemaphoreGive(_injectionMutex);
-    } else {
-        return false;
-    }
+        //xSemaphoreGive(_injectionMutex);
+    //} else {
+    //    return false;
+    //}
 
     return true;
 }
@@ -513,7 +513,7 @@ void GcodeHost::readNextCommand()
 void GcodeHost::readInjectedCommand()
 {
     if (_injectedCommand.length() > 0) {
-        if(xSemaphoreTake(_injectionMutex, MUTEX_TIMEOUT)) {
+        //if(xSemaphoreTake(_injectionMutex, MUTEX_TIMEOUT)) {
             _step = HOST_PROCESS_LINE;
             uint32_t ix = 0;
             char c = _injectedCommand[ix];
@@ -554,7 +554,7 @@ void GcodeHost::readInjectedCommand()
             } else {
                 _injectedCommand = _injectedCommand.substring(ix);
             }
-            xSemaphoreGive(_injectionMutex);
+            //xSemaphoreGive(_injectionMutex);
 
             if ((_currentCommand.indexOf("M108") != -1)|| (_currentCommand.indexOf("M112") != -1)){
                 _needAck = false;
@@ -563,7 +563,7 @@ void GcodeHost::readInjectedCommand()
                 _injectionNext = true;
                 _skipChecksum = true; 
             }
-        }
+        //}
     } else {
         //_step = _nextStep;
         if (_saveCommand != ""){
@@ -629,12 +629,6 @@ void GcodeHost::processCommand()
         _currentCommand = "";
 }
 
-//void GcodeHost::readScript(){
-    
-//}
-
-
-
 void GcodeHost::handle()
 {
 
@@ -674,8 +668,11 @@ void GcodeHost::handle()
         //_needAck = true;
         
         processFile(HOST_PAUSE_SCRIPT);
-        startStream();
-        _step = HOST_STREAMING_SCRIPT;
+        if (startStream()){
+            _step = HOST_STREAMING_SCRIPT;
+        } else {
+            _step = HOST_STREAM_PAUSED;
+        }
 #else
         _step = HOST_STREAM_PAUSED;
 #endif
@@ -715,7 +712,7 @@ void GcodeHost::handle()
         endStream();
         //reset();
         processFile(_saveFileName.c_str());
-        startStream();
+        startStream(); //error checking
         gotoLine(_saveCommandNumber);
         _processedSize = _saveProcessedSize;
         _step = HOST_READ_LINE;
@@ -732,10 +729,13 @@ void GcodeHost::handle()
         _currentCommand = "";
         //reset();
         processFile(HOST_ABORT_SCRIPT);
-        startStream();
-        _step = HOST_STREAMING_SCRIPT;
-        _nextStep = HOST_STOP_STREAM;
-
+        if(startStream()){
+            _step = HOST_STREAMING_SCRIPT;
+            _nextStep = HOST_STOP_STREAM;
+        } else {
+            _step = HOST_STOP_STREAM;
+            _nextStep = HOST_STOP_STREAM;
+        }
 #else
         _step = HOST_STOP_STREAM;
         _nextStep = HOST_STOP_STREAM;
@@ -778,11 +778,11 @@ void GcodeHost::handle()
             if (_nextStep == HOST_PAUSE_STREAM){
                 _step = HOST_PAUSE_STREAM;
                 _nextStep = HOST_STREAM_PAUSED;
-            }else if(_nextStep = HOST_STREAM_PAUSED){
+            }else if(_nextStep == HOST_STREAM_PAUSED){
                 _step = HOST_STREAM_PAUSED;
             } else if (_nextStep == HOST_ABORT_STREAM){
                 _step = HOST_ABORT_STREAM;
-                _nextStep == HOST_NO_STREAM;
+                _nextStep = HOST_NO_STREAM;
             } else if (_nextStep == HOST_NO_STREAM){
                 _step = HOST_NO_STREAM;
             }

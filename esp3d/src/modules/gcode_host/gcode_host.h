@@ -79,7 +79,7 @@ class GcodeHost
 {
 public:
 
-    SemaphoreHandle_t _injectionMutex;
+    //SemaphoreHandle_t _injectionMutex;
 
     GcodeHost();
     ~GcodeHost();
@@ -90,7 +90,6 @@ public:
 
     void handle();
 
-    //bool processScript(const char * line, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
     bool processFile(const char * filename, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
     bool sendCommand(const uint8_t* injection, size_t len);
     
