@@ -145,7 +145,8 @@ bool Esp3D::begin()
 #if defined(GCODE_HOST_FEATURE)
     esp3d_gcode_host.begin();
 #if defined(ESP_AUTOSTART_SCRIPT)
-    esp3d_gcode_host.processScript(ESP_AUTOSTART_SCRIPT);
+    const String autoStartScript = ESP_AUTOSTART_SCRIPT;
+    esp3d_gcode_host.sendCommand((uint8_t*)autoStartScript.c_str(), autoStartScript.length());
 #endif //ESP_AUTOSTART_FEATURE
 #if defined(ESP_AUTOSTART_SCRIPT_FILE)
     esp3d_gcode_host.processFile(ESP_AUTOSTART_SCRIPT_FILE);
