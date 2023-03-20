@@ -89,17 +89,18 @@ public:
 
     bool push(const uint8_t * sbuf, size_t len);
 
-    bool processFile(const char * filename, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
-    bool sendCommand(const uint8_t* injection, size_t len);
+    bool processFile(const char * filename, level_authenticate_type auth_type = LEVEL_GUEST, ESP3DOutput * output=nullptr);
+    bool sendCommand(const uint8_t* injection, size_t len, level_authenticate_type auth_type = LEVEL_GUEST, ESP3DOutput * output=nullptr);
     
-    bool pause();
-    bool resume();
-    bool abort();
+    bool pause(level_authenticate_type auth_type = LEVEL_GUEST);
+    bool resume(level_authenticate_type auth_type = LEVEL_GUEST);
+    bool abort(level_authenticate_type auth_type = LEVEL_GUEST);
 
     void resetCommandNumber(); //maybe this should be private
     uint32_t getCommandNumber(){ return _commandNumber;}
     void setCommandNumber(uint32_t n){ _commandNumber = n;} // Can't really see any good use for this
 
+    void setErrorNum(uint8_t error){ _error = error;}
     uint8_t getErrorNum(){ return _error;}
     uint8_t getStatus(){ return _step;}
 
@@ -133,7 +134,6 @@ private:
 
     bool _gotoLine(uint32_t line);
 
-    void _setErrorNum(uint8_t error){ _error = error;}
 
     uint8_t _buffer [ESP_HOST_BUFFER_SIZE+1];
     size_t _bufferSize;

@@ -84,6 +84,7 @@ void GcodeHost::reset()
     _totalSize = 0;
     _processedSize = 0;
     _saveProcessedSize = 0;
+    _auth_type = LEVEL_GUEST;
 }
 
 
@@ -319,13 +320,19 @@ void GcodeHost::_endStream()
 #endif //SD_DEVICE
     _step = HOST_NO_STREAM;
     _nextStep = HOST_NO_STREAM;
+    _auth_type = LEVEL_GUEST;
     //reset();
 }
 
 
 //NEEDS REWRITING FOR MULTIPLE LINES AND MUTEX - doneeee
-bool GcodeHost::sendCommand(const uint8_t* injection, size_t len)
+bool GcodeHost::sendCommand(const uint8_t* injection, size_t len, level_authenticate_type auth_type, ESP3DOutput * output)
 {   
+    if(auth_type < LEVEL_USER){
+        log_esp3d("Sending commands requires user level authorization or greater");
+        return false;
+    }
+
     String inject = "";
     const uint8_t* injectAddr = injection;
     //read command into string
@@ -647,7 +654,7 @@ void GcodeHost::handle()
         //reset();
         //_needAck = true;
         
-        processFile(HOST_PAUSE_SCRIPT);
+        processFile(HOST_PAUSE_SCRIPT, _auth_type);
         if (_startStream()){
             _step = HOST_STREAMING_SCRIPT;
         } else {
@@ -671,7 +678,7 @@ void GcodeHost::handle()
 #if defined(HOST_RESUME_SCRIPT)
         _endStream();
         //reset();
-        processFile(HOST_RESUME_SCRIPT);
+        processFile(HOST_RESUME_SCRIPT, _auth_type);
         if(_startStream()){
             _step = HOST_STREAMING_SCRIPT;
             _nextStep = HOST_STREAM_RESUMED;
@@ -691,7 +698,7 @@ void GcodeHost::handle()
 
         _endStream();
         //reset();
-        processFile(_saveFileName.c_str());
+        processFile(_saveFileName.c_str(), _auth_type);
         _startStream(); //error checking
         _gotoLine(_saveCommandNumber);
         _processedSize = _saveProcessedSize;
@@ -708,7 +715,7 @@ void GcodeHost::handle()
         _endStream();
         _currentCommand = "";
         //reset();
-        processFile(HOST_ABORT_SCRIPT);
+        processFile(HOST_ABORT_SCRIPT, _auth_type);
         if(_startStream()){
             _step = HOST_STREAMING_SCRIPT;
             _nextStep = HOST_STOP_STREAM;
@@ -827,8 +834,12 @@ void GcodeHost::handle()
 
 }
 
-bool  GcodeHost::abort()
+bool  GcodeHost::abort(level_authenticate_type auth_type)
 {
+    if (auth_type < LEVEL_USER){
+        log_esp3d("Stream actions require user level authorization or greater");
+        return false;
+    }
     if (_step == HOST_NO_STREAM) {
         return false;
     }
@@ -843,8 +854,12 @@ bool  GcodeHost::abort()
     return true;
 }
 
-bool GcodeHost::pause()
+bool GcodeHost::pause(level_authenticate_type auth_type)
 {
+    if (auth_type < LEVEL_USER){
+        log_esp3d("Stream actions require user level authorization or greater");
+        return false;
+    }
     if ((_step == HOST_NO_STREAM) || (_step == HOST_STREAM_PAUSED)) {
         return false;
     }
@@ -852,8 +867,12 @@ bool GcodeHost::pause()
     return true;
 }
 
-bool GcodeHost::resume()
+bool GcodeHost::resume(level_authenticate_type auth_type)
 {
+    if (auth_type < LEVEL_USER){
+        log_esp3d("Stream actions require user level authorization or greater");
+        return false;
+    }
     if (_step != HOST_STREAM_PAUSED) {
         return false;
     }
@@ -892,12 +911,16 @@ void GcodeHost::resetCommandNumber()
     }
     _commandNumber = 1;
 
-    sendCommand((const uint8_t *)resetcmd.c_str(), resetcmd.length());
+    sendCommand((const uint8_t *)resetcmd.c_str(), resetcmd.length(), _auth_type);
 
 }
 
 bool GcodeHost::processFile(const char * filename, level_authenticate_type auth_type, ESP3DOutput * output)
 {
+    if (auth_type < LEVEL_USER) {
+        log_esp3d("File streaming requires user level authorization or greater");
+        return false;
+    }
     bool target_found = false;
 #if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
     log_esp3d("Processing file client is  %d", output?output->client():ESP_SOCKET_SERIAL_CLIENT);
