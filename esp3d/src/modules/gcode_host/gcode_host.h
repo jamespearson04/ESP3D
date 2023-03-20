@@ -26,9 +26,12 @@ gcode_host.h - gcode host functions class
 #include "../authentication/authentication_service.h" 
 
 
-#if defined(FILESYSTEM_FEATURE) //probably need sd too
+#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE) //probably need sd too
 #include "../filesystem/esp_filesystem.h"
 #endif //FILESYSTEM_FEATURE
+#if defined(SD_DEVICE)
+#include "../filesystem/esp_sd.h"
+#endif
 
 class ESP3DOutput;
 
@@ -51,9 +54,6 @@ class ESP3DOutput;
 //Host streaming steps
 #define HOST_READ_LINE     0
 #define HOST_PROCESS_LINE  1
-#define HOST_WAIT4_ACK     2
-#define HOST_WAIT4_ACK_NT  3
-
 #define HOST_NO_STREAM     4
 #define HOST_START_STREAM  5
 #define HOST_PAUSE_STREAM  6
@@ -64,6 +64,8 @@ class ESP3DOutput;
 #define HOST_STREAM_PAUSED 11
 #define HOST_STREAM_COMMAND 12
 #define HOST_GOTO_LINE     13
+#define HOST_STREAMING_SCRIPT 14
+#define HOST_STREAM_RESUMED 15
 
 #define TYPE_SCRIPT_STREAM 0
 #define TYPE_FS_STREAM     1
@@ -90,7 +92,6 @@ public:
 
     //bool processScript(const char * line, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
     bool processFile(const char * filename, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
-    bool sendScript(const char * line, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
     bool sendCommand(const uint8_t* injection, size_t len);
     
     void readNextCommand();
@@ -98,6 +99,7 @@ public:
     bool gotoLine(uint32_t line);
     void awaitAck();
     void processCommand();
+    void readScript();
     
 
     bool startStream();
@@ -109,6 +111,7 @@ public:
     bool push(const uint8_t * sbuf, size_t len);
     void flush();
     bool isAck(String & line);
+    bool isBusy(String & line);
 
     void resetCommandNumber();
     uint32_t resendCommandNumber(String & response);
@@ -142,31 +145,37 @@ private:
 #endif //FILESYSTEM_FEATURE
 
 #if defined(SD_DEVICE)
+    ESP_SDFile SDfileHandle;
     bool _needRelease;
 #endif //SD_DEVICE
 
     size_t _totalSize;
     size_t _processedSize;
+    size_t _saveProcessedSize;
 
     uint32_t _currentPosition;
-
     
+    // May be better to replace strings with char arrays if memory turns out to be an issue.
     String _currentCommand;
+    String _saveCommand;
     String _injectedCommand;
 
     uint32_t _commandNumber;
     uint32_t _needCommandNumber;
+    uint32_t _saveCommandNumber;
 
     String _fileName;
+    String _saveFileName;
+
     String _script;
     uint8_t _fsType;
 
 
     uint8_t _step;
     uint8_t _nextStep;
-    uint8_t _state;
     uint8_t _error;
     bool _injectionQueued;
+    bool _injectionNext;
     bool _skipChecksum;
     bool _needAck;
     bool _noTimeout;
@@ -174,6 +183,7 @@ private:
     String _response;
 
     uint64_t _startTimeOut;
+    uint64_t _timeoutInterval;
 
     ESP3DOutput _outputStream;
     level_authenticate_type _auth_type;

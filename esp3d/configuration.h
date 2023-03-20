@@ -56,7 +56,7 @@
 * USE_SERIAL_1 //for ESP8266/32
 * USE_SERIAL_2 //for ESP32 Only
 */
-#define ESP_SERIAL_OUTPUT USE_SERIAL_0
+#define ESP_SERIAL_OUTPUT USE_SERIAL_2
 
 /* Serial buffer size
 *  Maximum size of the serial buffer
@@ -77,7 +77,7 @@
 * SMOOTHIEWARE
 * REPETIER
 */
-#define DEFAULT_FW UNKNOWN_FW
+#define DEFAULT_FW MARLIN
 
 /************************************
 *
@@ -230,7 +230,7 @@
 * ESP_SHARED_SD //Printer SD Card is also connected to ESP3D
 * Does your system has SD card and how it is connected to your ESP3D
 */
-//#define SD_DEVICE_CONNECTION ESP_DIRECT_SD
+#define SD_DEVICE_CONNECTION ESP_DIRECT_SD
 
 /* SD card library
 * ESP_SD_NATIVE //esp32 / esp8266
@@ -238,7 +238,7 @@
 * ESP_SDFAT     //esp8266  / esp32
 * ESP_SDFAT2    //esp8266  / esp32
 */
-//#define SD_DEVICE ESP_SDFAT2
+#define SD_DEVICE ESP_SDFAT2
 
 /* Sdio bit mode
 * Mode used by SDIO library 1 bit / 4bits
@@ -281,7 +281,7 @@
 /* SD card CS pin
 * The pin used to select SD card in SPI mode
 */
-//#define ESP_SD_CS_PIN 5
+#define ESP_SD_CS_PIN 5
 
 /************************************
 *
@@ -294,7 +294,7 @@
 /* Enable global filesystem
 * Allows to access to all filesystems from same location
 */
-//#define GLOBAL_FILESYSTEM_FEATURE
+#define GLOBAL_FILESYSTEM_FEATURE
 
 /* WebDav access
 * Use WebDav to access to your filesystem
@@ -302,7 +302,7 @@
 * FS_FLASH       //mount Flash FS
 * FS_SD          mount SD FS
 */
-//#define WEBDAV_FEATURE FS_ROOT
+#define WEBDAV_FEATURE FS_ROOT
 
 /* FTP access
 * Use FTP to access to your filesystem (1 connection only)
@@ -511,9 +511,9 @@
 * Commands to run on startup
 * Separate commands with ';' or use file
 */
-//#define ESP_AUTOSTART_SCRIPT "M117 Mounting SD;M21"
-//#define ESP_AUTOSTART_SCRIPT_FILE "autoscript.gco"
-
+//#define ESP_AUTOSTART_SCRIPT "M155 S3\n G28 X Y\n" //"M117 Mounting SD;M21" //not yet working
+#define ESP_AUTOSTART_SCRIPT_FILE "SD/Scripts/Autostart.gco"
+//"M155 S3\n G28 X Y\n"
 /* Enable lua interpreter
 * Allow to use lua interpreter on ESP3D
 */
@@ -525,8 +525,13 @@
 #define GCODE_HOST_FEATURE
 
 #if defined (GCODE_HOST_FEATURE)
-#define ESP_HOST_TIMEOUT 16000
+#define ESP_HOST_TIMEOUT 30000
+#define ESP_HOST_BUSY_TIMEOUT 5000
 #define MAX_TRY_2_SEND 5
+
+#define HOST_PAUSE_SCRIPT "SD/Scripts/Pause.gco"
+#define HOST_RESUME_SCRIPT "SD/Scripts/Resume.gco"
+#define HOST_ABORT_SCRIPT "SD/Scripts/Abort.gco"
 #endif //GCODE_HOST_FEATURE
 
 /* Settings location

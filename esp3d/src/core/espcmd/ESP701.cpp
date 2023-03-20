@@ -84,8 +84,6 @@ bool Commands::ESP701(const char* cmd_params, level_authenticate_type auth_type,
             case HOST_START_STREAM:
             case HOST_READ_LINE:
             case HOST_PROCESS_LINE:
-            case HOST_WAIT4_ACK:
-            case HOST_WAIT4_ACK_NT:
                 //TODO add % of progress and filename if any
                 //totalSize / processedSize / fileName
                 if (json) {

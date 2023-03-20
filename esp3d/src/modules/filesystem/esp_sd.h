@@ -29,7 +29,7 @@
 
 #define ESP_MAX_SD_OPENHANDLE 4
 
-class ESP_SDFile : public ESP_File
+class ESP_SDFile
 {
 public:
     ESP_SDFile(void *  handle = nullptr, bool isdir =false, bool iswritemode = false, const char * path = nullptr);

@@ -65,13 +65,17 @@ void GcodeHost::end()
 
 void GcodeHost::reset()
 {
+    _response = "";
     _commandNumber = 0;
     _needCommandNumber = 0;
     _currentCommand = "";
     _injectedCommand = "";
+    _saveCommand = "";
     _injectionQueued = false;
+    _injectionNext = false;
     _needAck = false;
     _noTimeout = false;
+    _timeoutInterval = ESP_HOST_TIMEOUT;
     _error = ERROR_NO_ERROR;
     _step = HOST_NO_STREAM;
     _nextStep = HOST_NO_STREAM;
@@ -81,6 +85,7 @@ void GcodeHost::reset()
     _outputStream.client(ESP_STREAM_HOST_CLIENT);
     _totalSize = 0;
     _processedSize = 0;
+    _saveProcessedSize = 0;
 }
 
 
@@ -122,6 +127,16 @@ bool GcodeHost::isAck(String & line)
             log_esp3d("got smoothie out");
             return true;
         }
+    }
+    return false;
+}
+
+bool GcodeHost::isBusy(String & line)
+{ //should probably also consider "invalid command" messages as Ack if they don't send one seperately
+    if (line.indexOf("busy:") != -1) { 
+        log_esp3d("got busy message");
+        _noTimeout = false; // no reason for no timeout if has busy protocol
+        return true;
     }
     return false;
 }
@@ -179,6 +194,11 @@ void GcodeHost::flush()
             log_esp3d("Got ok but out of the query");
         }
         
+    } else if(isBusy(_response)) {
+        _startTimeOut = millis();
+        _timeoutInterval = ESP_HOST_BUSY_TIMEOUT;
+
+    
     } else {
         if (_response.indexOf("error") != -1) {
             log_esp3d("Got error");
@@ -213,10 +233,7 @@ void GcodeHost::flush()
 //Opens the file/script initialized by processScript or processFile and sets the stream state as reading
 bool GcodeHost::startStream()
 {
-    if (_fsType ==TYPE_SCRIPT_STREAM) {
-        _totalSize = _script.length();
-        log_esp3d("Script line %s opened, size is %d", _script.c_str(), _totalSize);
-    }
+
 #if defined(FILESYSTEM_FEATURE)
     if (_fsType ==TYPE_FS_STREAM) {
         if (ESP_FileSystem::exists(_fileName.c_str())) {
@@ -236,14 +253,20 @@ bool GcodeHost::startStream()
 #if defined(SD_DEVICE)
     if (_fsType ==TYPE_SD_STREAM) {
         if (!ESP_SD::accessFS()) {
+            String Error = "error: stream failed: Can't access SD FS\n";
+            ESP3DOutput output(ESP_SERIAL_CLIENT);
+            output.dispatch((const uint8_t *)Error.c_str(), Error.length());
             _error = ERROR_FILE_NOT_FOUND;
             _step = HOST_ERROR_STREAM;
             _needRelease = false;
-            log_esp3d("File not found: %s", _fileName.c_str());
+            log_esp3d("File not found: %s, SD access denied", _fileName.c_str());
             return false;
         }
         _needRelease = true;
         if (ESP_SD::getState(true) == ESP_SDCARD_NOT_PRESENT) {
+            String Error = "error: stream failed: SD not present\n";
+            ESP3DOutput output(ESP_SERIAL_CLIENT);
+            output.dispatch((const uint8_t *)Error.c_str(), Error.length());
             _error = ERROR_FILE_NOT_FOUND;
             _step = HOST_ERROR_STREAM;
             log_esp3d("File not found: %s", _fileName.c_str());
@@ -252,12 +275,15 @@ bool GcodeHost::startStream()
         ESP_SD::setState(ESP_SDCARD_BUSY );
 
         if (ESP_SD::exists(_fileName.c_str())) {
-            fileHandle = ESP_SD::open(_fileName.c_str());
+            SDfileHandle = ESP_SD::open(_fileName.c_str());
         }
-        if (fileHandle.isOpen()) {
-            _totalSize = fileHandle.size();
+        if (SDfileHandle.isOpen()) {
+            _totalSize = SDfileHandle.size();
             log_esp3d("File %s opened, size is %d", _fileName.c_str(), _totalSize);
         } else {
+            String Error = "error: stream failed: Can't open file\n" + _fileName;
+            ESP3DOutput output(ESP_SERIAL_CLIENT);
+            output.dispatch((const uint8_t *)Error.c_str(), Error.length());
             _error = ERROR_FILE_NOT_FOUND;
             _step = HOST_ERROR_STREAM;
             log_esp3d("File not found: %s", _fileName.c_str());
@@ -265,14 +291,16 @@ bool GcodeHost::startStream()
         }
     }
 #endif //SD_DEVICE
-    resetCommandNumber();
+#if defined(FILESYSTEM_FEATURE) || defined(SDSUPPORT)
+    //resetCommandNumber();
     _currentPosition = 0;
     _processedSize = 0;
-    _response = "";
+
     _error = ERROR_NO_ERROR;
     _startTimeOut =millis();
     _step = HOST_READ_LINE;
     _nextStep = HOST_READ_LINE;
+#endif
 
     return true;
 }
@@ -290,8 +318,8 @@ void GcodeHost::endStream()
 #endif //FILESYSTEM_FEATURE
 #if defined(SD_DEVICE)
     if (_fsType ==TYPE_SD_STREAM) {
-        if (fileHandle.isOpen()) {
-            fileHandle.close();
+        if (SDfileHandle.isOpen()) {
+            SDfileHandle.close();
         }
         if(_needRelease) {
             ESP_SD::releaseFS();
@@ -318,113 +346,166 @@ bool GcodeHost::sendCommand(const uint8_t* injection, size_t len)
     inject.trim();
     
     if(xSemaphoreTake(_injectionMutex, MUTEX_TIMEOUT)) {
-        /*if ((inject.indexOf("M112") != -1) || (inject.indexOf("M108") != -1)){ //if is emergency stop, jump to top of queue, set _ignoreAck - any others want to skip ack? need an emergency parser function - M108 too
-            while(inject.length() > 0){
+        int m112 = inject.indexOf("M112");
+        int m108 = inject.indexOf("M108");
+        //function that checks for all of these would be handy, could just return the smallest num above -1 if any
+
+
+        while ((m112 != -1) || (m108 != -1)){ //if is emergency stop, jump to top of queue, - any others want to skip ack? need an emergency parser function - M108 too
+            int NL = inject.indexOf('\n');
+            if (NL != -1){
+                if ((NL > m112) || (NL > m108)){
+                    if(_injectedCommand.length() > 0){
+                        _injectedCommand ='\n' + _injectedCommand;
+                    }
+                    _injectedCommand = inject.substring(0, NL-1) + _injectedCommand;
+                    inject = inject.substring(NL + 1);
+                    inject.trim();
+                } else {
+                    if(_injectedCommand.length() > 0){
+                        _injectedCommand =_injectedCommand + '\n';
+                    }
+                    _injectedCommand = _injectedCommand + inject.substring(0, NL-1);
+                    inject = inject.substring(NL + 1);
+                    inject.trim();
+                }
+            }else{
                 if(_injectedCommand.length() > 0){
                     _injectedCommand ='\n' + _injectedCommand;
                 }
-                int NL = inject.indexOf('\n');
-                if (NL != -1){
-                    _injectedCommand = _injectedCommand + inject.substring(0, NL-1);
-                    inject = inject.substring(NL + 1);
-                    inject.trim();
-
-                }else{
-                    _injectedCommand = inject + _injectedCommand;
-                    inject = "";
-                }
+                _injectedCommand = inject + _injectedCommand;
+                inject = "";
             }
-            //_needAck = false; //Maybe not this way, read whilst waiting for ack, and process when we aren't 
+            m112 = inject.indexOf("M112");
+            m108 = inject.indexOf("M108");
 
-        } else {*/ if (1){
-            while(inject.length() > 0){
-                if(_injectedCommand.length() > 0){
-                    _injectedCommand = _injectedCommand + '\n';
-                }
-                int NL = inject.indexOf('\n');
-                if (NL != -1){
-                    _injectedCommand = _injectedCommand + inject.substring(0, NL-1);
-                    inject = inject.substring(NL + 1);
-                    inject.trim();
+        }
 
-                }else{
-                    _injectedCommand = _injectedCommand + inject;
-                    inject = "";
-                }
+        while(inject.length() > 0){
+            if(_injectedCommand.length() > 0){
+                _injectedCommand = _injectedCommand + '\n';
+            }
+            int NL = inject.indexOf('\n');
+            if (NL != -1){
+                _injectedCommand = _injectedCommand + inject.substring(0, NL-1);
+                inject = inject.substring(NL + 1);
+                inject.trim();
+
+            }else{
+                _injectedCommand = _injectedCommand + inject;
+                inject = "";
             }
         }
         xSemaphoreGive(_injectionMutex);
-    }else{
+    } else {
         return false;
     }
 
     return true;
 }
 
-
-bool GcodeHost::sendScript(const char * line, level_authenticate_type auth_type, ESP3DOutput * output)
-{
-    _script = *line; //don't need a global variable for this
-    sendCommand((const uint8_t *)_script.c_str(), _script.length());
-    _script = "";
-
-    //_fsType = TYPE_SCRIPT_STREAM;
-    //_step = HOST_START_STREAM;
-    //_auth_type = auth_type;
-    return true;
-    
-}
-
 /// @brief Read the next line for processing from the script, FS file or SD file.
 //may be better to have seperate function for injection and check _injectionQueued in Handle
 void GcodeHost::readNextCommand()
 {
-    _currentCommand = "";
-    _step = HOST_PROCESS_LINE;
-    
-#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
-
-    _processedSize++;
-    _currentPosition++; 
-    char c = (char)fileHandle.read(); //does casting need to be explicit? probably for the best for now at least
-    while (((c =='\n') || (c =='\r') || (c == ' '))){ //ignore any leading spaces and empty lines
-        _processedSize++;
-        _currentPosition++;
-        c = (char)fileHandle.read();
+    if (_step == HOST_READ_LINE){
+        _step = HOST_PROCESS_LINE;
     }
-    while (c == ';'){ // while its a full line comment, read on to the next line
-        c = (char)fileHandle.read();
-        while (!((c =='\n') || (c =='\r') || (c == 0) || (c == -1))){ //skim to end of line
-            _processedSize++;
-            _currentPosition++;
-            c = (char)fileHandle.read();
-        }
+
+
+#if defined(FILESYSTEM_FEATURE)
+    if (_fsType ==TYPE_FS_STREAM) {
+        _processedSize++;
+        _currentPosition++; 
+        char c = (char)fileHandle.read(); //does casting need to be explicit? probably for the best for now at least
         while (((c =='\n') || (c =='\r') || (c == ' '))){ //ignore any leading spaces and empty lines
             _processedSize++;
             _currentPosition++;
             c = (char)fileHandle.read();
         }
-    }
-
-    while (!((c == '\n') || (c =='\r') || (c == 0) || (c == -1) || (_currentPosition >= _totalSize-2))){ // while not end of line or end of file
-        if (c == ';'){ //reached a comment, skip to next line
+        while (c == ';'){ // while its a full line comment, read on to the next line
+            _processedSize++;
+            _currentPosition++;
+            c = (char)fileHandle.read();
             while (!((c =='\n') || (c =='\r') || (c == 0) || (c == -1))){ //skim to end of line
                 _processedSize++;
                 _currentPosition++;
                 c = (char)fileHandle.read();
             }
-        } else { //no comment yet, read into command
-            _currentCommand += c;
-            _processedSize++;
-            _currentPosition++;
-            c = (char)fileHandle.read();
+            while (((c =='\n') || (c =='\r') || (c == ' '))){ //ignore any leading spaces and empty lines
+                _processedSize++;
+                _currentPosition++;
+                c = (char)fileHandle.read();
+            }
+        }
+
+        while (!((c == '\n') || (c =='\r') || (c == 0) || (c == -1) || (_currentPosition > _totalSize))){ // while not end of line or end of file
+            if (c == ';'){ //reached a comment, skip to next line
+                while (!((c =='\n') || (c =='\r') || (c == 0) || (c == -1))){ //skim to end of line
+                    _processedSize++;
+                    _currentPosition++;
+                    c = (char)fileHandle.read();
+                }
+            } else { //no comment yet, read into command
+                _currentCommand += c;
+                _processedSize++;
+                _currentPosition++;
+                c = (char)fileHandle.read();
+            }
         }
     }
 #endif //FILESYSTEM_FEATURE
+    
+#if defined(SD_DEVICE)
+    if (_fsType ==TYPE_SD_STREAM) {
+        _processedSize++;
+        _currentPosition++; 
+        char c = (char)SDfileHandle.read(); //does casting need to be explicit? probably for the best for now at least
+        while (((c =='\n') || (c =='\r') || (c == ' '))){ //ignore any leading spaces and empty lines
+            _processedSize++;
+            _currentPosition++;
+            c = (char)SDfileHandle.read();
+        }
+        while (c == ';'){ // while its a full line comment, read on to the next line
+            _processedSize++;
+            _currentPosition++;
+            c = (char)SDfileHandle.read();
+            while (!((c =='\n') || (c =='\r') || (c == 0) || (c == -1))){ //skim to end of line
+                _processedSize++;
+                _currentPosition++;
+                c = (char)SDfileHandle.read();
+            }
+            while (((c =='\n') || (c =='\r') || (c == ' '))){ //ignore any leading spaces and empty lines
+                _processedSize++;
+                _currentPosition++;
+                c = (char)SDfileHandle.read();
+            }
+        }
+
+        while (!((c == '\n') || (c =='\r') || (c == 0) || (c == -1) || (_currentPosition > _totalSize))){ // while not end of line or end of file
+            if (c == ';'){ //reached a comment, skip to next line
+                while (!((c =='\n') || (c =='\r') || (c == 0) || (c == -1))){ //skim to end of line
+                    _processedSize++;
+                    _currentPosition++;
+                    c = (char)SDfileHandle.read();
+                }
+            } else { //no comment yet, read into command
+                _currentCommand += c; // this results in a bad end char being added at the end
+                _processedSize++;
+                _currentPosition++;
+                c = (char)SDfileHandle.read();
+            }
+        }
+    }
+#endif //SD_DEVICE
 
     if (_currentCommand.length() == 0) {
-        _step = HOST_STOP_STREAM;
-        _nextStep = HOST_NO_STREAM;
+        if (_step == HOST_PROCESS_LINE){
+            _step = HOST_STOP_STREAM;
+            _nextStep = HOST_NO_STREAM;
+        } else {
+            _step = _nextStep;
+        }
     }
 }
 
@@ -433,7 +514,6 @@ void GcodeHost::readInjectedCommand()
 {
     if (_injectedCommand.length() > 0) {
         if(xSemaphoreTake(_injectionMutex, MUTEX_TIMEOUT)) {
-            _currentCommand = "";
             _step = HOST_PROCESS_LINE;
             uint32_t ix = 0;
             char c = _injectedCommand[ix];
@@ -474,16 +554,24 @@ void GcodeHost::readInjectedCommand()
             } else {
                 _injectedCommand = _injectedCommand.substring(ix);
             }
-            _skipChecksum = true; 
             xSemaphoreGive(_injectionMutex);
 
             if ((_currentCommand.indexOf("M108") != -1)|| (_currentCommand.indexOf("M112") != -1)){
                 _needAck = false;
             }
-
+            if (_currentCommand != ""){
+                _injectionNext = true;
+                _skipChecksum = true; 
+            }
         }
     } else {
-        _step = _nextStep;
+        //_step = _nextStep;
+        if (_saveCommand != ""){
+            _currentCommand = _saveCommand;
+            _saveCommand = "";
+        } else {
+            _step = _nextStep;
+        }
         _injectionQueued = false;
         _skipChecksum = false; 
     }
@@ -518,8 +606,8 @@ void GcodeHost::processCommand()
             if(!_skipChecksum){ //For injected commands
                 _currentCommand = CheckSumCommand(_currentCommand.c_str(), _commandNumber);
                 _commandNumber++;
-                _skipChecksum = false;
             }
+            _skipChecksum = false;
             _currentCommand = _currentCommand + "\n";
 
 #if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
@@ -534,8 +622,18 @@ void GcodeHost::processCommand()
             log_esp3d("Command is GCODE command");
         
         }
-        _step = _nextStep;
+        if (_step != HOST_STREAMING_SCRIPT){
+            _step = _nextStep;
+        }
+        _injectionNext = false;
+        _currentCommand = "";
 }
+
+//void GcodeHost::readScript(){
+    
+//}
+
+
 
 void GcodeHost::handle()
 {
@@ -550,19 +648,38 @@ void GcodeHost::handle()
 
     case HOST_START_STREAM:
         startStream();
+        resetCommandNumber();
     break;
 
     case HOST_STOP_STREAM:
         endStream();
+        //reset();
     break;
 
     case HOST_PAUSE_STREAM:
     //inject pause script/file
+#if defined(HOST_PAUSE_SCRIPT) || defined(HOST_RESUME_SCRIPT)
+        _saveFileName = _fileName;
+        if (_fsType == TYPE_FS_STREAM){
+            _saveFileName = "FS/" + _saveFileName;
+        } else if (_fsType == TYPE_SD_STREAM){
+            _saveFileName = "SD/" + _saveFileName;
+        }
+        _saveProcessedSize = _processedSize;
+        _saveCommandNumber = _commandNumber;
+#endif
 #if defined(HOST_PAUSE_SCRIPT)
-
+        endStream();
+        //reset();
+        //_needAck = true;
+        
+        processFile(HOST_PAUSE_SCRIPT);
+        startStream();
+        _step = HOST_STREAMING_SCRIPT;
+#else
+        _step = HOST_STREAM_PAUSED;
 #endif
         _nextStep = HOST_STREAM_PAUSED;
-        _step = HOST_STREAM_PAUSED;
     break;
 
     case HOST_STREAM_PAUSED:
@@ -575,19 +692,81 @@ void GcodeHost::handle()
     case HOST_RESUME_STREAM:
     //inject resume script/file
 #if defined(HOST_RESUME_SCRIPT)
+        endStream();
+        //reset();
+        processFile(HOST_RESUME_SCRIPT);
+        if(startStream()){
+            _step = HOST_STREAMING_SCRIPT;
+            _nextStep = HOST_STREAM_RESUMED;
+        } else {
+            _step = HOST_STREAM_RESUMED;
+            _nextStep = HOST_READ_LINE;
 
-#endif
-        _nextStep = HOST_READ_LINE;
+        }
+#else
         _step = HOST_READ_LINE;
+        _nextStep = HOST_READ_LINE;
+#endif
+        //_step = HOST_READ_LINE;
     break;
+
+    case HOST_STREAM_RESUMED:
+
+        endStream();
+        //reset();
+        processFile(_saveFileName.c_str());
+        startStream();
+        gotoLine(_saveCommandNumber);
+        _processedSize = _saveProcessedSize;
+        _step = HOST_READ_LINE;
+        _nextStep = HOST_READ_LINE;
+        
+    break;
+
+
 
     case HOST_ABORT_STREAM:
     //inject abort script/file
 #if defined(HOST_ABORT_SCRIPT)
+        endStream();
+        _currentCommand = "";
+        //reset();
+        processFile(HOST_ABORT_SCRIPT);
+        startStream();
+        _step = HOST_STREAMING_SCRIPT;
+        _nextStep = HOST_STOP_STREAM;
 
-#endif
-        _nextStep = HOST_NO_STREAM;
+#else
         _step = HOST_STOP_STREAM;
+        _nextStep = HOST_STOP_STREAM;
+#endif
+    break;
+
+    case HOST_STREAMING_SCRIPT:
+        if((_injectionQueued == true) && (_injectionNext == false)){
+            if(_currentCommand != ""){
+                _saveCommand = _currentCommand;
+            }
+            readInjectedCommand();
+        }
+        else if(_currentCommand == ""){
+            if(_saveCommand != ""){
+                _currentCommand = _saveCommand;
+                _saveCommand = "";
+            } else {
+                readNextCommand();
+            }
+        } else if (_needAck == true){
+            if ((millis() - _startTimeOut > _timeoutInterval)) {
+                log_esp3d("Timeout waiting for ack");
+                _error = ERROR_TIME_OUT;
+                _step = HOST_ERROR_STREAM;
+            }
+        } else {
+            _skipChecksum = true;
+            processCommand();
+        }
+    
     break;
 
     case HOST_READ_LINE:
@@ -616,17 +795,27 @@ void GcodeHost::handle()
 
     case HOST_PROCESS_LINE:
         if (_needAck == true){
-            if ((_noTimeout == false) && (millis() - _startTimeOut > ESP_HOST_TIMEOUT)) {
+            if ((_noTimeout == false) && (millis() - _startTimeOut > _timeoutInterval)) {
                 log_esp3d("Timeout waiting for ack");
                 _error = ERROR_TIME_OUT;
                 _step = HOST_ERROR_STREAM;
+            } else if (_injectionQueued && !_injectionNext){
+                _saveCommand = _currentCommand;
+                _currentCommand = "";
+                readInjectedCommand();
             }
+            
         } else if (_needCommandNumber != 0){
             gotoLine(_needCommandNumber);
             _needCommandNumber = 0;
             readNextCommand();
         } else {
             processCommand();
+            if (_saveCommand != ""){
+                _currentCommand = _saveCommand;
+                _saveCommand = "";
+                _step = HOST_PROCESS_LINE;
+            }
         }
     break;
 
@@ -668,9 +857,8 @@ bool  GcodeHost::abort()
     //abort script/file/whatever
     _error=ERROR_STREAM_ABORTED;
     //we do not use step to do faster abort -> ok as long as we don't mind losing place etc
-    endStream();
+    //endStream(); // do this in handle
     _step = HOST_ABORT_STREAM;
-    _nextStep = HOST_NO_STREAM;
     return true;
 }
 
@@ -747,7 +935,7 @@ bool GcodeHost::processFile(const char * filename, level_authenticate_type auth_
         log_esp3d("No file to process");
         return false;
     }
-    if (_step != HOST_NO_STREAM) {
+    if ((_step != HOST_NO_STREAM) && (_step != HOST_PAUSE_STREAM) && (_step != HOST_RESUME_STREAM) && (_step != HOST_ABORT_STREAM)) {
         log_esp3d("Streaming already in progress");
         return false;
     }
@@ -769,12 +957,12 @@ bool GcodeHost::processFile(const char * filename, level_authenticate_type auth_
     }
     //if no header it is also an FS file
     if (!target_found) {
+        target_found = true;
         log_esp3d("Processing FS file %s", _fileName.c_str());
         _fsType = TYPE_FS_STREAM;
-        target_found = true;
     }
 #endif //FILESYSTEM_FEATURE
-    //it is not a file so it is a script
+    /*
     if (!target_found ) {
         target_found = true;
         _fsType = TYPE_SCRIPT_STREAM;
@@ -783,8 +971,14 @@ bool GcodeHost::processFile(const char * filename, level_authenticate_type auth_
         log_esp3d("Processing Script file %s", _script.c_str());
         _fileName = "";
     }
-    _step = HOST_START_STREAM;
-    _auth_type = auth_type;
+    */
+#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
+    if (_step == HOST_NO_STREAM){
+        _step = HOST_START_STREAM;
+        _auth_type = auth_type;
+    }
+#endif //FILESYSTEM_FEATURE || SD_DEVICE
+    
     return true;
 }
 
@@ -794,15 +988,27 @@ bool GcodeHost::gotoLine(uint32_t line)
     _commandNumber = 1;
     _currentPosition = 0;
 
-    fileHandle.seek(_currentPosition);
+#if defined(FILESYSTEM_FEATURE)
+    if (_fsType ==TYPE_FS_STREAM) {
+        fileHandle.seek(_currentPosition);
+    }
+#endif //FILESYSTEM_FEATURE
+#if defined(SD_DEVICE)
+    if (_fsType ==TYPE_SD_STREAM) {
+        SDfileHandle.seek(_currentPosition);
+    }
+#endif //SD_DEVICE
+
 
     for ( _commandNumber = 1; _commandNumber < line; _commandNumber++){
+        _currentCommand = "";
         readNextCommand();
         if (esp3d_commands.is_esp_command((uint8_t *)_currentCommand.c_str(), _currentCommand.length())) {
             _commandNumber--; //if it's for the ESP it doesn't count
         }
     }
 
+    _currentCommand = "";
     return true;
 
 
