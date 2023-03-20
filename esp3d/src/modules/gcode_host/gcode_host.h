@@ -79,48 +79,27 @@ class GcodeHost
 {
 public:
 
-    //SemaphoreHandle_t _injectionMutex;
-
     GcodeHost();
     ~GcodeHost();
 
     bool begin();
     void reset();
+    void handle();
     void end();
 
-    void handle();
+    bool push(const uint8_t * sbuf, size_t len);
 
     bool processFile(const char * filename, level_authenticate_type auth_type = LEVEL_ADMIN, ESP3DOutput * output=nullptr);
     bool sendCommand(const uint8_t* injection, size_t len);
     
-    void readNextCommand();
-    void readInjectedCommand();
-    bool gotoLine(uint32_t line);
-    void awaitAck();
-    void processCommand();
-    void readScript();
-    
-
-    bool startStream();
-    void endStream();
     bool pause();
     bool resume();
     bool abort();
 
-    bool push(const uint8_t * sbuf, size_t len);
-    void flush();
-    bool isAck(String & line);
-    bool isBusy(String & line);
-
-    void resetCommandNumber();
-    uint32_t resendCommandNumber(String & response);
+    void resetCommandNumber(); //maybe this should be private
     uint32_t getCommandNumber(){ return _commandNumber;}
-    void setCommandNumber(uint32_t n){ _commandNumber = n;}
+    void setCommandNumber(uint32_t n){ _commandNumber = n;} // Can't really see any good use for this
 
-    uint8_t Checksum(const char * command, uint32_t commandSize);
-    String CheckSumCommand(const char* command, uint32_t commandnb);
-
-    void  setErrorNum(uint8_t error){ _error = error;}
     uint8_t getErrorNum(){ return _error;}
     uint8_t getStatus(){ return _step;}
 
@@ -135,11 +114,32 @@ public:
     }
 
 private:
+
+    void _flush();
+    bool _isAck(String & line);
+    bool _isBusy(String & line);
+    uint32_t _resendCommandNumber(String & line);
+
+    bool _startStream();
+    void _endStream();
+
+    void _readNextCommand();
+    void _readInjectedCommand();
+
+    uint8_t _Checksum(const char * command, uint32_t commandSize);
+    String _CheckSumCommand(const char* command, uint32_t commandnb);
+    void _processCommand();
+    void _awaitAck();
+
+    bool _gotoLine(uint32_t line);
+
+    void _setErrorNum(uint8_t error){ _error = error;}
+
     uint8_t _buffer [ESP_HOST_BUFFER_SIZE+1];
     size_t _bufferSize;
 
     
-#if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
+#if defined(FILESYSTEM_FEATURE)
     ESP_File fileHandle;
 #endif //FILESYSTEM_FEATURE
 
@@ -160,7 +160,7 @@ private:
     String _injectedCommand;
 
     uint32_t _commandNumber;
-    uint32_t _needCommandNumber;
+    uint32_t _commandNumberToResend;
     uint32_t _saveCommandNumber;
 
     String _fileName;
