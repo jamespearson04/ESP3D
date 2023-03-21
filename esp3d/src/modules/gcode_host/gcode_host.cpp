@@ -46,7 +46,6 @@ GcodeHost::~GcodeHost()
 bool GcodeHost::begin()
 {
     reset();
-    assert(_injectionMutex);
     return true;
 }
 
@@ -280,6 +279,7 @@ bool GcodeHost::_startStream()
     //resetCommandNumber();
     _currentPosition = 0;
     _processedSize = 0;
+    _currentCommand = "";
 
     _error = ERROR_NO_ERROR;
     _startTimeOut =millis();

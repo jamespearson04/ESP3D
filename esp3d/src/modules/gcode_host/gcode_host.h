@@ -169,7 +169,6 @@ private:
     String _script;
     uint8_t _fsType;
 
-
     uint8_t _step;
     uint8_t _nextStep;
     uint8_t _error;
