@@ -31,12 +31,6 @@
 #include "../filesystem/esp_sd.h"
 #endif //SD_DEVICE
 
-/* Defined in configuration.h
-#define ESP_HOST_TIMEOUT 16000
-#define ESP_HOST_HEATING_TIMEOUT 60000
-#define MAX_TRY_2_SEND 5
-*/
-
 GcodeHost esp3d_gcode_host;
 
 GcodeHost::GcodeHost()
@@ -117,7 +111,7 @@ bool GcodeHost::push(const uint8_t * sbuf, size_t len)
 
 bool GcodeHost::_isAck(String & line)
 { //should probably also consider "invalid command" messages as Ack if they don't send one seperately
-    if (line.indexOf("ok") != -1) { //maybe should have "ok\n" to ensure it's at line end (or some other way), but would need adding to end of string first
+    if (line.indexOf("ok") != -1) {
         log_esp3d("got ok");
         return true;
     }
@@ -225,7 +219,6 @@ void GcodeHost::_flush()
 //Opens the file/script initialized by processScript or processFile and sets the stream state as reading
 bool GcodeHost::_startStream()
 {
-
 #if defined(FILESYSTEM_FEATURE)
     if (_fsType ==TYPE_FS_STREAM) {
         if (ESP_FileSystem::exists(_fileName.c_str())) {
@@ -321,17 +314,18 @@ void GcodeHost::_endStream()
     _step = HOST_NO_STREAM;
     _nextStep = HOST_NO_STREAM;
     _auth_type = LEVEL_GUEST;
-    //reset();
 }
 
 
 //NEEDS REWRITING FOR MULTIPLE LINES AND MUTEX - doneeee
 bool GcodeHost::sendCommand(const uint8_t* injection, size_t len, level_authenticate_type auth_type, ESP3DOutput * output)
 {   
+#ifdef AUTHENTICATION_FEATURE
     if(auth_type < LEVEL_USER){
         log_esp3d("Sending commands requires user level authorization or greater");
         return false;
     }
+#endif
 
     String inject = "";
     const uint8_t* injectAddr = injection;
@@ -634,7 +628,6 @@ void GcodeHost::handle()
 
     case HOST_STOP_STREAM:
         _endStream();
-        //reset();
     break;
 
     case HOST_PAUSE_STREAM:
@@ -650,10 +643,7 @@ void GcodeHost::handle()
         _saveCommandNumber = _commandNumber;
 #endif
 #if defined(HOST_PAUSE_SCRIPT)
-        _endStream();
-        //reset();
-        //_needAck = true;
-        
+        _endStream();        
         processFile(HOST_PAUSE_SCRIPT, _auth_type);
         if (_startStream()){
             _step = HOST_STREAMING_SCRIPT;
@@ -667,17 +657,14 @@ void GcodeHost::handle()
     break;
 
     case HOST_STREAM_PAUSED:
-    //do injection if required
         if(_injectionQueued){
             _readInjectedCommand();
         }
     break;
 
     case HOST_RESUME_STREAM:
-    //inject resume script/file
 #if defined(HOST_RESUME_SCRIPT)
         _endStream();
-        //reset();
         processFile(HOST_RESUME_SCRIPT, _auth_type);
         if(_startStream()){
             _step = HOST_STREAMING_SCRIPT;
@@ -685,21 +672,18 @@ void GcodeHost::handle()
         } else {
             _step = HOST_STREAM_RESUMED;
             _nextStep = HOST_READ_LINE;
-
         }
 #else
         _step = HOST_READ_LINE;
         _nextStep = HOST_READ_LINE;
 #endif
-        //_step = HOST_READ_LINE;
     break;
 
     case HOST_STREAM_RESUMED:
 
         _endStream();
-        //reset();
         processFile(_saveFileName.c_str(), _auth_type);
-        _startStream(); //error checking
+        _startStream(); //error checking may be useful here
         _gotoLine(_saveCommandNumber);
         _processedSize = _saveProcessedSize;
         _step = HOST_READ_LINE;
@@ -710,11 +694,9 @@ void GcodeHost::handle()
 
 
     case HOST_ABORT_STREAM:
-    //inject abort script/file
 #if defined(HOST_ABORT_SCRIPT)
         _endStream();
         _currentCommand = "";
-        //reset();
         processFile(HOST_ABORT_SCRIPT, _auth_type);
         if(_startStream()){
             _step = HOST_STREAMING_SCRIPT;
@@ -836,30 +818,29 @@ void GcodeHost::handle()
 
 bool  GcodeHost::abort(level_authenticate_type auth_type)
 {
+#ifdef AUTHENTICATION_FEATURE
     if (auth_type < LEVEL_USER){
         log_esp3d("Stream actions require user level authorization or greater");
         return false;
     }
+#endif
     if (_step == HOST_NO_STREAM) {
         return false;
     }
     log_esp3d("Aborting stream");
-    //TODO: what to do in addition ?
-    //Emergency stop for Marlin added (Maybe need a switch for other firmwares? -> should be mostly universal -> Not GRBL)
-    //abort script/file/whatever
     _error=ERROR_STREAM_ABORTED;
-    //we do not use step to do faster abort -> ok as long as we don't mind losing place etc
-    //_endStream(); // do this in handle
     _step = HOST_ABORT_STREAM;
     return true;
 }
 
 bool GcodeHost::pause(level_authenticate_type auth_type)
 {
+#ifdef AUTHENTICATION_FEATURE
     if (auth_type < LEVEL_USER){
         log_esp3d("Stream actions require user level authorization or greater");
         return false;
     }
+#endif
     if ((_step == HOST_NO_STREAM) || (_step == HOST_STREAM_PAUSED)) {
         return false;
     }
@@ -869,15 +850,16 @@ bool GcodeHost::pause(level_authenticate_type auth_type)
 
 bool GcodeHost::resume(level_authenticate_type auth_type)
 {
+#ifdef AUTHENTICATION_FEATURE
     if (auth_type < LEVEL_USER){
         log_esp3d("Stream actions require user level authorization or greater");
         return false;
     }
+#endif
     if (_step != HOST_STREAM_PAUSED) {
         return false;
     }
     _step = HOST_RESUME_STREAM;
-    _nextStep = HOST_READ_LINE;
     return true;
 }
 
@@ -909,18 +891,20 @@ void GcodeHost::resetCommandNumber()
     } else {
         resetcmd = "M110 N0";
     }
-    _commandNumber = 1;
 
+    _commandNumber = 1;
     sendCommand((const uint8_t *)resetcmd.c_str(), resetcmd.length(), _auth_type);
 
 }
 
 bool GcodeHost::processFile(const char * filename, level_authenticate_type auth_type, ESP3DOutput * output)
 {
+#ifdef AUTHENTICATION_FEATURE
     if (auth_type < LEVEL_USER) {
         log_esp3d("File streaming requires user level authorization or greater");
         return false;
     }
+#endif
     bool target_found = false;
 #if COMMUNICATION_PROTOCOL == SOCKET_SERIAL
     log_esp3d("Processing file client is  %d", output?output->client():ESP_SOCKET_SERIAL_CLIENT);
@@ -967,13 +951,16 @@ bool GcodeHost::processFile(const char * filename, level_authenticate_type auth_
     }
 #endif //FILESYSTEM_FEATURE
 #if defined(FILESYSTEM_FEATURE) || defined(SD_DEVICE)
-    if (_step == HOST_NO_STREAM){
+    if (_step == HOST_NO_STREAM){ //Won't work correctly whilst injecting commands
         _step = HOST_START_STREAM;
         _auth_type = auth_type;
     }
+    return true;
+
 #endif //FILESYSTEM_FEATURE || SD_DEVICE
     
-    return true;
+    log_esp3d("No filesystem available to read file from");
+    return false;
 }
 
 bool GcodeHost::_gotoLine(uint32_t line)
