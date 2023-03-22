@@ -803,7 +803,6 @@ void GcodeHost::handle()
         ESP3DOutput output(ESP_SERIAL_CLIENT);
 #endif//COMMUNICATION_PROTOCOL
         output.dispatch((const uint8_t *)Error.c_str(), Error.length());
-        output.dispatch((const uint8_t *)Error.c_str(), Error.length());
         _step = HOST_STOP_STREAM;
     }
     break;
