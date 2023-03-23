@@ -23,7 +23,6 @@
 #include "../../include/esp3d_config.h"
 #include "../../core/esp3doutput.h"
 #include <time.h>
-#include "../filesystem/esp_filesystem.h"
 
 #define ESP_SD_FS_HEADER "/SD"
 
