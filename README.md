@@ -1,6 +1,8 @@
-Semi-stable Gcodehost branch for ESP3D 3.0
+Semi-stable early alpha Gcodehost branch for ESP3D 3.0
 
-Works fairly well, but prints stop momentarily when new connections are made. (such as when refreshing the browser)
+Currently only confirmed to work for Marlin
+
+Works fairly well, but prints stop momentarily (2-3s) when new connections are made. (such as when refreshing the browser)
 
 use with ESP700 and ESP701
 
