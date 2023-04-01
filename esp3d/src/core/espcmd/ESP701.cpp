@@ -19,7 +19,7 @@
 */
 //#define ESP_DEBUG_FEATURE DEBUG_OUTPUT_SERIAL0
 #include "../../include/esp3d_config.h"
-#if  defined(GCODE_HOST_FEATURE)
+#ifdef GCODE_HOST_FEATURE
 #include "../commands.h"
 #include "../esp3doutput.h"
 #include "../settings_esp3d.h"
@@ -49,21 +49,21 @@ bool Commands::ESP701(const char* cmd_params, level_authenticate_type auth_type,
         parameter = (get_param(cmd_params, "action="));
         if (parameter.length() != 0) {
             if (parameter.equalsIgnoreCase("PAUSE")) {
-                if (esp3d_gcode_host.pause()) {
+                if (esp3d_gcode_host.pause(auth_type)) {
                     response = format_response(COMMANDID, json, true, "Stream paused");
                 } else {
                     response = format_response(COMMANDID, json, false, "No stream to pause");
                     noError = false;
                 }
             } else if (parameter.equalsIgnoreCase("RESUME")) {
-                if (esp3d_gcode_host.resume()) {
+                if (esp3d_gcode_host.resume(auth_type)) {
                     response = format_response(COMMANDID, json, true, "Stream resumed");
                 } else {
                     response = format_response(COMMANDID, json, false, "No stream to resume");
                     noError = false;
                 }
             } else if (parameter.equalsIgnoreCase("ABORT")) {
-                if (esp3d_gcode_host.abort()) {
+                if (esp3d_gcode_host.abort(auth_type)) {
                     response = format_response(COMMANDID, json, true, "Stream aborted");
                 } else {
                     response = format_response(COMMANDID, json, false, "No stream to abort");
@@ -84,8 +84,6 @@ bool Commands::ESP701(const char* cmd_params, level_authenticate_type auth_type,
             case HOST_START_STREAM:
             case HOST_READ_LINE:
             case HOST_PROCESS_LINE:
-            case HOST_WAIT4_ACK:
-            case HOST_WAIT4_HEATING:
                 //TODO add % of progress and filename if any
                 //totalSize / processedSize / fileName
                 if (json) {
