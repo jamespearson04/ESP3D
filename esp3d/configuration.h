@@ -546,7 +546,7 @@
 * Commands to run on startup
 * Separate commands with ';' or use file
 */
-//#define ESP_AUTOSTART_SCRIPT "M155 S3\n G28 X Y\n" //"M117 Mounting SD;M21" //not yet working
+//#define ESP_AUTOSTART_SCRIPT "M155 S3\n G28 X Y\n" //"M117 Mounting SD;M21" //not yet tested
 #define ESP_AUTOSTART_SCRIPT_FILE "SD/Scripts/Autostart.gco"
 //"M155 S3\n G28 X Y\n"
 /* Enable lua interpreter
