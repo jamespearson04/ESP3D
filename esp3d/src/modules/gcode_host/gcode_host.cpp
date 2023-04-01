@@ -1,7 +1,7 @@
 /*
   gcode_host.cpp -  gcode host functions class
 
-  Copyright (c) 2014 Luc Lebosse. All rights reserved.
+  Copyright (c) 2014 Luc Lebosse and 2023 James Pearson. All rights reserved.
 
   This code is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -124,7 +124,7 @@ bool GcodeHost::_isAck(String & line)
 }
 
 bool GcodeHost::_isBusy(String & line)
-{ //should probably also consider "invalid command" messages as Ack if they don't send one seperately
+{ 
     if (line.indexOf("busy:") != -1) { 
         log_esp3d("got busy message");
         _noTimeout = false; // no reason for no timeout if has busy protocol
@@ -136,7 +136,7 @@ bool GcodeHost::_isBusy(String & line)
 uint32_t GcodeHost::_resendCommandNumber(String & line)
 {
     uint32_t l = 0;
-    String sresend = "resend:"; //decapitalised from "Resend:" due to _response.toLowerCase() (Maybe not necessary if we catalogue enough responses)
+    String sresend = "resend:";
     if ( Settings_ESP3D::GetFirmwareTarget() == SMOOTHIEWARE) {
         sresend = "rs n"; //same here, "rs N"
     }
@@ -170,8 +170,6 @@ void GcodeHost::_flush()
     _response.toLowerCase();
 
     if (_isAck(_response)) {
-        //check if we have proper ok response
-        //like if numbering is enabled
         if (_needAck == true){
             _needAck = false;
             _noTimeout = false;
@@ -191,25 +189,12 @@ void GcodeHost::_flush()
         }
     }
 
-    if ((_commandNumberToResend = _resendCommandNumber(_response)) != 0){// -----------------------------------------------------------------------------------------
-        //set a flag to set the appropriate command before reading or processing any more.
-        //if((_step == HOST_WAIT4_ACK) || (_step == HOST_WAIT4_ACK_NT)) {
-        //    _step = _nextStep;
-        if (_needAck == true){
-            _needAck = false;
-            _noTimeout = false;
-        } else {
+    if ((_commandNumberToResend = _resendCommandNumber(_response)) != 0){
+        if (_needAck == false){
             log_esp3d("Got resend out of the query");
         }
-
     }
 
-
-    //TODO
-    //if resend request
-    //if other commands
-
-    //Clear the buffer
     memset(_buffer, 0, sizeof(_buffer));
     _bufferSize = 0;
 
@@ -276,7 +261,6 @@ bool GcodeHost::_startStream()
     }
 #endif //SD_DEVICE
 #if defined(FILESYSTEM_FEATURE) || defined(SDSUPPORT)
-    //resetCommandNumber();
     _currentPosition = 0;
     _processedSize = 0;
     _currentCommand = "";
@@ -316,8 +300,6 @@ void GcodeHost::_endStream()
     _auth_type = LEVEL_GUEST;
 }
 
-
-//NEEDS REWRITING FOR MULTIPLE LINES AND MUTEX - doneeee
 bool GcodeHost::sendCommand(const uint8_t* injection, size_t len, level_authenticate_type auth_type, ESP3DOutput * output)
 {   
 #ifdef AUTHENTICATION_FEATURE
@@ -341,7 +323,7 @@ bool GcodeHost::sendCommand(const uint8_t* injection, size_t len, level_authenti
     int m108 = inject.indexOf("M108");
     //function that checks for all of these would be handy, could just return the smallest num above -1 if any
 
-    while ((m112 != -1) || (m108 != -1)){ //if is emergency stop, jump to top of queue, - any others want to skip ack? need an emergency parser function - M108 too
+    while ((m112 != -1) || (m108 != -1)){ //if is emergency stop, jump to top of queue, - any others want to skip ack?
         int NL = inject.indexOf('\n');
         if (NL != -1){
             if ((NL > m112) || (NL > m108)){
@@ -390,7 +372,7 @@ bool GcodeHost::sendCommand(const uint8_t* injection, size_t len, level_authenti
     return true;
 }
 
-/// @brief Read the next line for processing from the script, FS file or SD file.
+// Read the next line for processing from the script, FS file or SD file.
 //may be better to have seperate function for injection and check _injectionQueued in Handle
 void GcodeHost::_readNextCommand()
 {
@@ -495,7 +477,7 @@ void GcodeHost::_readNextCommand()
     }
 }
 
-/// @brief Read the next line for processing from the injection buffer
+/// Read the next line for processing from the injection buffer
 void GcodeHost::_readInjectedCommand()
 {
     if (_injectedCommand.length() > 0) {
@@ -562,7 +544,7 @@ void GcodeHost::_readInjectedCommand()
 
 void GcodeHost::_awaitAck()
 {
-    if ((_currentCommand.indexOf("M190") == 0) && (_currentCommand.indexOf("M109") == 0) && (_currentCommand.indexOf("G4") == 0) && (_currentCommand.indexOf("M400") == 0)) { // should we check for them at the start, or anywhere in the line?
+    if ((_currentCommand.indexOf("M190") != -1) && (_currentCommand.indexOf("M109") != -1) && (_currentCommand.indexOf("G4") != -1) && (_currentCommand.indexOf("M400") != -1)) { // should we check for them at the start, or anywhere in the line?
         _needAck = true;
         _noTimeout = true;
     }
@@ -581,8 +563,8 @@ void GcodeHost::_processCommand()
 
         if (esp3d_commands.is_esp_command((uint8_t *)_currentCommand.c_str(), _currentCommand.length())) { // If it's a command for the ESP, send it on
             esp3d_commands.process((uint8_t *)_currentCommand.c_str(), _currentCommand.length(),&outputhost, _auth_type);
-            log_esp3d("Command is ESP command: %s, client is %d", _currentCommand.c_str(), outputhost); //Make sure this works
-        } else { //if it's for the printer, see if it needs checksum + line no, add if so
+            log_esp3d("Command is ESP command: %s, client is %d", _currentCommand.c_str(), outputhost);
+        } else {
             _awaitAck();
             if(!_skipChecksum){ //For injected commands
                 _currentCommand = _CheckSumCommand(_currentCommand.c_str(), _commandNumber);
@@ -631,7 +613,6 @@ void GcodeHost::handle()
     break;
 
     case HOST_PAUSE_STREAM:
-    //inject pause script/file
 #if defined(HOST_PAUSE_SCRIPT) || defined(HOST_RESUME_SCRIPT)
         _saveFileName = _fileName;
         if (_fsType == TYPE_FS_STREAM){
@@ -887,8 +868,6 @@ void GcodeHost::resetCommandNumber()
     String resetcmd = "M110 N0";
     if (Settings_ESP3D::GetFirmwareTarget() == SMOOTHIEWARE) {
         resetcmd = "N0 M110";
-    } else {
-        resetcmd = "M110 N0";
     }
 
     _commandNumber = 1;
