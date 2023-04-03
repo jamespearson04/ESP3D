@@ -359,7 +359,7 @@ bool GcodeHost::sendCommand(const uint8_t* injection, size_t len, level_authenti
         }
         int NL = inject.indexOf('\n');
         if (NL != -1){
-            _injectedCommand = _injectedCommand + inject.substring(0, NL-1);
+            _injectedCommand = _injectedCommand + inject.substring(0, NL);
             inject = inject.substring(NL + 1);
             inject.trim();
 
